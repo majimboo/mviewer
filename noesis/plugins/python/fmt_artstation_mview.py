@@ -1,4 +1,4 @@
-import noesis, rapi, json, io
+import noesis, rapi, json, io, os
 from inc_noesis import *
 from pprint import pprint
 
@@ -28,10 +28,20 @@ def loadModel(data, mdlList):
     # load all the materials
     for mat in scene["materials"]:
         name = mat["name"]
-        diffuse = mat["albedoTex"]
+        fdiffuse = mat["albedoTex"]
+        ftypediffuse = os.path.splitext(fdiffuse)[1]
 
-        # texList.append(NoeTexture(diffuse, ))
-        matList.append(NoeMaterial(name, diffuse))
+        diffuse = None
+        if ftypediffuse == ".jpg":
+            diffuse = find(files["image/jpeg"], "filename", fdiffuse)["data"]
+        if ftypediffuse == ".png":
+            diffuse = find(files["image/png"], "filename", fdiffuse)["data"]
+
+        texture_d = rapi.loadTexByHandler(diffuse, ftypediffuse)
+        texture_d.name = fdiffuse
+
+        texList.append(texture_d)
+        matList.append(NoeMaterial(name, fdiffuse))
 
     # load all the mesh
     for mesh in scene["meshes"]:
@@ -84,7 +94,7 @@ def loadModel(data, mdlList):
 
         for v in range(vertexCount):
             posList.append(NoeVec3.fromBytes(df.readBytes(12)))
-            uvsList.append(NoeVec3([df.readFloat(), df.readFloat(), 0]))
+            uvsList.append(NoeVec3([df.readFloat(), -df.readFloat(), 0]))
             df.readBytes(stride - 20)
 
         for mesh in subMeshes:

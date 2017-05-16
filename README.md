@@ -1,7 +1,9 @@
 MView File Viewer
 =================
 
-This project consists of 2 scripts. `extract_mview` to extract files inside the mview archive and `extract_model` to convert the `.dat` files to `.obj`. Also includes a Noesis plugin. (see below)
+This project consists of 2 scripts. `extract_mview` to extract files inside the mview archive and `extract_model` to convert the `.dat` files to `.obj`.
+
+Also includes a Noesis plugin. (see below)
 
 **Example**
 
@@ -62,9 +64,9 @@ Viewer
 You can use the included viewer called Noesis. Just drag and drop the `.obj` file into Noesis.
 You can also open the `.obj` file with any 3D program that supports wavefront format. @[richwhitehouse](http://richwhitehouse.com/index.php?content=inc_projects.php)
 
-A Noesis plugin is also available at `noesis/plugins/python/fmt_artstation_mview.py`. Just open the `.mview` files with Noesis. (no texture support)
+A Noesis plugin is also available at `noesis/plugins/python/fmt_artstation_mview.py`. Just open the `.mview` files with Noesis.
 
-![](http://i.imgur.com/4F1azVi.png)
+![](http://i.imgur.com/LgUFvEF.png)
 
 Notes
 =====

@@ -28,20 +28,28 @@ def loadModel(data, mdlList):
     # load all the materials
     for mat in scene["materials"]:
         name = mat["name"]
+
         fdiffuse = mat["albedoTex"]
-        ftypediffuse = os.path.splitext(fdiffuse)[1]
+        diffuse = loadTex(files, fdiffuse)
+        texList.append(diffuse)
+        material = NoeMaterial(name, fdiffuse)
 
-        diffuse = None
-        if ftypediffuse == ".jpg":
-            diffuse = find(files["image/jpeg"], "filename", fdiffuse)["data"]
-        if ftypediffuse == ".png":
-            diffuse = find(files["image/png"], "filename", fdiffuse)["data"]
+        if "normalTex" in mat:
+            fnormal = mat["normalTex"]
+            normal =  loadTex(files, fnormal)
+            texList.append(normal)
+            material.setNormalTexture(fnormal)
 
-        texture_d = rapi.loadTexByHandler(diffuse, ftypediffuse)
-        texture_d.name = fdiffuse
+        if "reflectivityTex" in mat:
+            fspecular = mat["reflectivityTex"]
+            specular = loadTex(files, fspecular)
+            texList.append(specular)
+            material.setSpecularTexture(fspecular)
 
-        texList.append(texture_d)
-        matList.append(NoeMaterial(name, fdiffuse))
+        if "alphaTest" in mat:
+            material.setAlphaTest(mat["alphaTest"])
+
+        matList.append(material)
 
     # load all the mesh
     for mesh in scene["meshes"]:
@@ -195,3 +203,17 @@ def find(lst, key, value):
         if dic[key] == value:
             return lst[i]
     return -1
+
+def loadTex(files, fname):
+    ftype = os.path.splitext(fname)[1]
+
+    data = None
+    if ftype == ".jpg":
+        data = find(files["image/jpeg"], "filename", fname)["data"]
+    if ftype == ".png":
+        data = find(files["image/png"], "filename", fname)["data"]
+
+    tex = rapi.loadTexByHandler(data, ftype)
+    tex.name = fname
+
+    return tex

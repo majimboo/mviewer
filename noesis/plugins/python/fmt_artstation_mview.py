@@ -89,9 +89,9 @@ def loadModel(data, mdlList):
 
             for f in range(indexCount2):
                 if indexTypeSize == 2:
-                    idxList.append(df.readShort())
+                    idxList.append(df.readUShort())
                 else:
-                    idxList.append(df.readInt())
+                    idxList.append(df.readUInt())
 
             mesh = NoeMesh(idxList, posList)
             mesh.setName("%s_%d" % (name, i))
@@ -127,9 +127,9 @@ def extract(bs):
     while not bs.checkEOF():
         name = bs.readString()
         ftype = bs.readString()
-        c = bs.readInt()
-        d = bs.readInt()
-        e = bs.readInt()
+        c = bs.readUInt()
+        d = bs.readUInt()
+        e = bs.readUInt()
         bin = bs.readBytes(d)
         if c & 1:
             bin = decompress(bin, e)

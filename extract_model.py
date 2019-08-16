@@ -106,7 +106,7 @@ def main(folder):
 
         for x, faces in enumerate(face_list):
             output.write("\n")
-            output.write("g {0}-{1}-{2}\n".format(dat, name, x))
+            output.write("g {0}\n".format(name))
             output.write("usemtl {0}\n".format(materials_list[x]))
 
             for face in faces:

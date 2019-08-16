@@ -102,7 +102,7 @@ def main(folder):
             output.write("v {0} {1} {2}\n".format(vert[0], vert[1], vert[2]))
 
         for uv in uv_list:
-            output.write("vt {0} {1}\n".format(uv[0], -uv[1]))
+            output.write("vt {0} {1}\n".format(uv[0], uv[1]))
 
         for x, faces in enumerate(face_list):
             output.write("\n")

@@ -121,4 +121,5 @@ def mkDIR(dir):
     if not os.path.exists(dir):
         os.makedirs(dir)
 
-main(sys.argv[1])
+if __name__ == "__main__":
+    main(sys.argv[1])

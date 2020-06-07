@@ -102,11 +102,11 @@ def main(folder):
             output.write("v {0} {1} {2}\n".format(vert[0], vert[1], vert[2]))
 
         for uv in uv_list:
-            output.write("vt {0} {1}\n".format(uv[0], -uv[1]))
+            output.write("vt {0} {1}\n".format(uv[0], uv[1]))
 
         for x, faces in enumerate(face_list):
             output.write("\n")
-            output.write("g {0}-{1}-{2}\n".format(dat, name, x))
+            output.write("g {0}\n".format(name))
             output.write("usemtl {0}\n".format(materials_list[x]))
 
             for face in faces:
@@ -121,4 +121,5 @@ def mkDIR(dir):
     if not os.path.exists(dir):
         os.makedirs(dir)
 
-main(sys.argv[1])
+if __name__ == "__main__":
+    main(sys.argv[1])

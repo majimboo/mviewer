@@ -116,24 +116,25 @@ def loadModel(data, mdlList):
 
     return 1
 
-def extract(bs):
-    files = {}
-    files["image/derp"] = []
-    files["application/json"] = []
-    files["image/jpeg"] = []
-    files["image/png"] = []
-    files["model/mset"] = []
-
-    while not bs.checkEOF():
-        name = bs.readString()
-        ftype = bs.readString()
-        c = bs.readUInt()
-        d = bs.readUInt()
-        e = bs.readUInt()
-        bin = bs.readBytes(d)
-        if c & 1:
-            bin = decompress(bin, e)
-        files[ftype].append({ "filename": name, "data": bin })
+def extract(bs): 
+    files = {} 
+    files["image/derp"] = [] 
+    files["application/json"] = [] 
+    files["image/jpeg"] = [] 
+    files["image/png"] = [] 
+    files["model/mset"] = [] 
+    files["animData/mset"] = [] 
+    files["keyframes/mset"] = [] 
+    while not bs.checkEOF(): 
+        name = bs.readString() 
+        ftype = bs.readString() 
+        c = bs.readUInt() 
+        d = bs.readUInt() 
+        e = bs.readUInt() 
+        bin = bs.readBytes(d) 
+        if c & 1: 
+            bin = decompress(bin, e) 
+        files[ftype].append({"filename": name,"data": bin }) 
     return files
 
 def decompress(a, b):

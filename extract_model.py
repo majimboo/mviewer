@@ -1,8 +1,25 @@
 #!/usr/bin/python
 #@majidemo
 
-import json, os, sys
+import json, math, os, sys
 from struct import *
+
+
+def decode_normal(packed_x, packed_y):
+    """Decode octahedral-encoded normal from two unsigned shorts.
+    Matches Marmoset's matvert.glsl ic() function."""
+    x_f = packed_x / 65535.0
+    y_f = packed_y / 65535.0
+    z_neg = y_f > (32767.1 / 65535.0)
+    if z_neg:
+        y_f -= 32768.0 / 65535.0
+    nx = (2.0 * 65535.0 / 32767.0) * x_f - 1.0
+    ny = (2.0 * 65535.0 / 32767.0) * y_f - 1.0
+    nz_sq = max(0.0, 1.0 - nx * nx - ny * ny)
+    nz = math.sqrt(nz_sq)
+    if z_neg:
+        nz = -nz
+    return (nx, ny, nz)
 
 def main(folder):
     f = open("%s/scene.json" % (folder))
@@ -60,6 +77,7 @@ def main(folder):
         face_list = []
         vert_list = []
         uv_list = []
+        normal_list = []
         materials_list = []
 
         for sub_mesh in mesh["subMeshes"]:
@@ -92,17 +110,31 @@ def main(folder):
             pos = unpack("<fff", df.read(12))
             # texcoord
             texpos = unpack("<ff", df.read(8))
-            # stride
-            df.read(stride - 20)
+            # secondary texcoord (if present)
+            if tex_coord_2 > 0:
+                df.read(8)
+            # tangent + bitangent (skip)
+            df.read(4)  # vTangent: 2 x unsigned short
+            df.read(4)  # vBitangent: 2 x unsigned short
+            # normal: 2 x unsigned short (octahedral encoded)
+            packed_normal = unpack("<HH", df.read(4))
+            normal = decode_normal(packed_normal[0], packed_normal[1])
+            # vertex color (if present)
+            if vertex_color > 0:
+                df.read(4)
 
             vert_list.append(pos)
             uv_list.append(texpos)
+            normal_list.append(normal)
 
         for vert in vert_list:
             output.write("v {0} {1} {2}\n".format(vert[0], vert[1], vert[2]))
 
         for uv in uv_list:
             output.write("vt {0} {1}\n".format(uv[0], uv[1]))
+
+        for n in normal_list:
+            output.write("vn {0:.6f} {1:.6f} {2:.6f}\n".format(n[0], n[1], n[2]))
 
         for x, faces in enumerate(face_list):
             output.write("\n")

@@ -65,6 +65,13 @@ You can download Noesis from [here](https://richwhitehouse.com/index.php?content
 
 ![](http://i.imgur.com/LgUFvEF.png)
 
+Limitations
+===========
+
+The OBJ export captures mesh geometry and vertex normals, but does not yet extract scene lighting, environment maps, or reflection/specular setup from the `.mview` file. This means renders from the exported OBJ will look noticeably flatter than the original Marmoset scene — materials lack the correct reflections, ambient occlusion response, and lighting conditions that Marmoset bakes into the viewer.
+
+For the most accurate rendering of an `.mview` scene, use the [Marmoset Viewer](https://marmoset.co/toolbag/viewer/) directly. For example, the [nod-laser-turret](https://github.com/CodexCoder21Organization/nod-laser-turret) project bundles an embedded Jetty web server that serves the Marmoset viewer with the original `.mview` file, producing a faithful reproduction of the artist's intended lighting and materials.
+
 Notes
 =====
 

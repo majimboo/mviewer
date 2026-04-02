@@ -12,6 +12,7 @@ use serde_json::json;
 use animated::{MeshSkinData, export_animated_scene};
 use crate::animation::ParsedAnimationSet;
 use crate::archive::Archive;
+use crate::js_export::JsExportScene;
 use crate::mesh::{DecodedMesh, decode_mesh};
 use crate::scene::{Lights, MainCamera, MaterialDesc, Scene, ViewDesc};
 use textures::{
@@ -26,9 +27,11 @@ pub(super) fn export_static_scene(
     material_lookup: &HashMap<String, usize>,
     input_path: &Path,
     output_dir: &Path,
+    progress: &mut dyn FnMut(u8, &str),
 ) -> Result<()> {
     let mut mesh_nodes = Vec::new();
-    for mesh_desc in &scene.meshes {
+    let total_meshes = scene.meshes.len().max(1);
+    for (mesh_idx, mesh_desc) in scene.meshes.iter().enumerate() {
         let entry = archive
             .get(&mesh_desc.file)
             .with_context(|| format!("missing mesh payload {}", mesh_desc.file))?;
@@ -37,12 +40,15 @@ pub(super) fn export_static_scene(
         let mesh_index = builder.add_mesh(mesh_desc, &decoded, material_lookup)?;
         let node_index = builder.add_node(mesh_desc.name.clone(), mesh_index, mesh_desc.transform);
         mesh_nodes.push(node_index);
+        let p = 70 + ((mesh_idx + 1) * 25 / total_meshes);
+        progress(p as u8, "Processing meshes");
     }
 
     let scene_name = input_path
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or("scene");
+    progress(98, "Writing scene files");
     std::mem::take(builder).finish(scene_name, mesh_nodes, scene, output_dir)
 }
 
@@ -52,17 +58,50 @@ pub fn export_scene(
     input_path: &Path,
     output_dir: &Path,
 ) -> Result<()> {
+    export_scene_with_js_scene(archive, scene, input_path, output_dir, None)
+}
+
+pub fn export_scene_with_js_scene(
+    archive: &Archive,
+    scene: &Scene,
+    input_path: &Path,
+    output_dir: &Path,
+    js_scene: Option<&JsExportScene>,
+) -> Result<()> {
+    let mut noop = |_progress: u8, _stage: &str| {};
+    export_scene_with_js_scene_progress(
+        archive,
+        scene,
+        input_path,
+        output_dir,
+        js_scene,
+        &mut noop,
+    )
+}
+
+pub fn export_scene_with_js_scene_progress(
+    archive: &Archive,
+    scene: &Scene,
+    input_path: &Path,
+    output_dir: &Path,
+    js_scene: Option<&JsExportScene>,
+    progress: &mut dyn FnMut(u8, &str),
+) -> Result<()> {
     fs::create_dir_all(output_dir)
         .with_context(|| format!("failed to create {}", output_dir.display()))?;
+    progress(0, "Copying source textures");
+    export_source_texture_files(archive, output_dir, progress)?;
 
     let mut builder = GltfBuilder::default();
-    builder.archive_entries = export_raw_archive_entries(archive, output_dir)?;
     let mut material_lookup = HashMap::new();
     let mut texture_cache = HashMap::new();
 
-    for material in &scene.materials {
+    let total_materials = scene.materials.len().max(1);
+    for (material_idx, material) in scene.materials.iter().enumerate() {
         let index = builder.add_material(archive, material, output_dir, &mut texture_cache)?;
         material_lookup.insert(material.name.clone(), index);
+        let p = 20 + ((material_idx + 1) * 35 / total_materials);
+        progress(p as u8, "Exporting materials");
     }
 
     if let Some(animations) = ParsedAnimationSet::from_scene(archive, scene)? {
@@ -74,6 +113,8 @@ pub fn export_scene(
             &material_lookup,
             input_path,
             output_dir,
+            js_scene,
+            progress,
         );
     }
 
@@ -84,6 +125,7 @@ pub fn export_scene(
         &material_lookup,
         input_path,
         output_dir,
+        progress,
     )
 }
 
@@ -103,8 +145,6 @@ pub(super) struct GltfBuilder {
     pub(super) extensions_used: Vec<String>,
     pub(super) punctual_lights: Vec<LightDef>,
     pub(super) root_extras: Option<serde_json::Value>,
-    pub(super) runtime_metadata: Option<serde_json::Value>,
-    pub(super) archive_entries: Vec<ArchiveManifestEntry>,
     pub(super) bound_camera_names: HashSet<String>,
     pub(super) bound_light_indices: HashSet<usize>,
 }
@@ -518,14 +558,6 @@ impl GltfBuilder {
                 }
             }
         }
-
-        let runtime_sidecar = build_runtime_sidecar(
-            scene,
-            &self.archive_entries,
-            self.runtime_metadata.take(),
-        );
-        write_runtime_sidecar(output_dir, &runtime_sidecar)?;
-        self.root_extras = None;
 
         let bin_name = format!("{scene_name}.bin");
         let gltf_name = format!("{scene_name}.gltf");
@@ -1208,63 +1240,46 @@ fn quaternion_from_direction(direction: [f32; 3]) -> [f32; 4] {
     ]))
 }
 
-fn export_raw_archive_entries(
+fn export_source_texture_files(
     archive: &Archive,
     output_dir: &Path,
-) -> Result<Vec<ArchiveManifestEntry>> {
-    let raw_dir = output_dir.join("mviewer_raw");
-    fs::create_dir_all(&raw_dir)
-        .with_context(|| format!("failed to create {}", raw_dir.display()))?;
-
-    let mut manifest = Vec::new();
-    for entry in archive.entries() {
+    progress: &mut dyn FnMut(u8, &str),
+) -> Result<()> {
+    let entries = archive.entries();
+    let texture_entries: Vec<_> = entries
+        .iter()
+        .filter(|entry| is_source_texture_file(&entry.name))
+        .collect();
+    let total = texture_entries.len().max(1);
+    for (index, entry) in texture_entries.into_iter().enumerate() {
+        if !is_source_texture_file(&entry.name) {
+            continue;
+        }
         let relative_path = archive_relative_output_path(&entry.name);
-        let output_path = raw_dir.join(&relative_path);
+        let output_path = output_dir.join(&relative_path);
         if let Some(parent) = output_path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
         }
-        fs::write(&output_path, &entry.data)
-            .with_context(|| format!("failed to write {}", output_path.display()))?;
-        manifest.push(ArchiveManifestEntry {
-            name: entry.name.clone(),
-            file_type: entry.file_type.clone(),
-            byte_length: entry.data.len(),
-            exported_path: path_to_slash(Path::new("mviewer_raw").join(relative_path)),
-        });
-    }
-
-    Ok(manifest)
-}
-
-fn build_runtime_sidecar(
-    scene: &Scene,
-    archive_entries: &[ArchiveManifestEntry],
-    runtime_metadata: Option<serde_json::Value>,
-) -> serde_json::Value {
-    let mut root = json!({
-        "sourceScene": scene,
-        "sky": scene.sky,
-        "fog": scene.fog,
-        "shadowFloor": scene.shadow_floor,
-        "archive": {
-            "rawDir": "mviewer_raw",
-            "entries": archive_entries,
+        if !output_path.exists() {
+            fs::write(&output_path, &entry.data)
+                .with_context(|| format!("failed to write {}", output_path.display()))?;
         }
-    });
-    if let Some(runtime_metadata) = runtime_metadata {
-        merge_json(&mut root, json!({
-            "runtime": runtime_metadata
-        }));
+        let p = ((index + 1) * 20 / total) as u8;
+        progress(p, "Copying source textures");
     }
-    root
+    Ok(())
 }
 
-fn write_runtime_sidecar(output_dir: &Path, runtime: &serde_json::Value) -> Result<()> {
-    let path = output_dir.join("mviewer.runtime.json");
-    fs::write(&path, serde_json::to_vec_pretty(runtime)?)
-        .with_context(|| format!("failed to write {}", path.display()))?;
-    Ok(())
+fn is_source_texture_file(name: &str) -> bool {
+    matches!(
+        Path::new(name)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase())
+            .as_deref(),
+        Some("png" | "jpg" | "jpeg" | "webp" | "tga" | "bmp" | "gif" | "dds")
+    )
 }
 
 fn archive_relative_output_path(name: &str) -> PathBuf {
@@ -1323,17 +1338,6 @@ fn merge_json(target: &mut serde_json::Value, incoming: serde_json::Value) {
         }
         (target_value, incoming_value) => *target_value = incoming_value,
     }
-}
-
-#[derive(serde::Serialize, Clone)]
-pub struct ArchiveManifestEntry {
-    pub name: String,
-    #[serde(rename = "type")]
-    pub file_type: String,
-    #[serde(rename = "byteLength")]
-    pub byte_length: usize,
-    #[serde(rename = "exportedPath")]
-    pub exported_path: String,
 }
 
 fn rotation_matrix(angle: f32, axis: usize) -> [f32; 16] {

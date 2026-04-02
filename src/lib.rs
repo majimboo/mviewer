@@ -2,10 +2,10 @@ pub mod animation;
 pub mod archive;
 pub mod gltf;
 pub mod gui;
+pub mod js_export;
 pub mod mesh;
 pub mod runtime;
 pub mod scene;
-pub mod viewer;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -14,6 +14,7 @@ use anyhow::{Context, Result};
 
 use crate::animation::ParsedAnimationSet;
 use crate::archive::Archive;
+use crate::js_export::JsExportScene;
 use crate::runtime::RuntimeScene;
 use crate::scene::Scene;
 
@@ -111,19 +112,28 @@ pub fn export_project(
     output_dir: &Path,
     options: &ExportOptions,
 ) -> Result<ExportReport> {
-    let filtered_scene = filtered_scene(&project.scene, options);
-    gltf::export_scene(&project.archive, &filtered_scene, &project.input_path, output_dir)?;
-    let scene_name = project
-        .input_path
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("scene");
-    viewer::write_viewer(output_dir, &format!("{scene_name}.gltf"), "mviewer.runtime.json")?;
+    export_project_scene(project, &project.scene, output_dir, options, None)
+}
 
+fn export_project_scene(
+    project: &ProjectDocument,
+    scene: &Scene,
+    output_dir: &Path,
+    options: &ExportOptions,
+    js_scene: Option<&JsExportScene>,
+) -> Result<ExportReport> {
+    let filtered_scene = filtered_scene(scene, options);
+    gltf::export_scene_with_js_scene(
+        &project.archive,
+        &filtered_scene,
+        &project.input_path,
+        output_dir,
+        js_scene,
+    )?;
     Ok(ExportReport {
         output_dir: output_dir.to_path_buf(),
         exported_meshes: filtered_scene.meshes.len(),
-        total_meshes: project.scene.meshes.len(),
+        total_meshes: scene.meshes.len(),
     })
 }
 

@@ -9,6 +9,7 @@ use crate::animation::{
     mul_matrix4 as animation_mul_matrix4,
 };
 use crate::archive::Archive;
+use crate::js_export::{JsAnimationSample, JsExportScene};
 use crate::mesh::decode_mesh;
 use crate::scene::Scene;
 
@@ -25,8 +26,10 @@ pub fn export_animated_scene(
     material_lookup: &HashMap<String, usize>,
     input_path: &Path,
     output_dir: &Path,
+    js_scene: Option<&JsExportScene>,
+    progress: &mut dyn FnMut(u8, &str),
 ) -> Result<()> {
-    let Some(primary_animation) = animations.animations.first() else {
+    let Some(primary_animation) = selected_primary_animation(scene, animations) else {
         return super::export_static_scene(
             builder,
             archive,
@@ -34,6 +37,7 @@ pub fn export_animated_scene(
             material_lookup,
             input_path,
             output_dir,
+            progress,
         );
     };
 
@@ -124,6 +128,7 @@ pub fn export_animated_scene(
         .unwrap_or_else(|| vec![None; scene.meshes.len()]);
 
     let mut render_nodes = Vec::new();
+    let total_meshes = scene.meshes.len().max(1);
     for (mesh_scene_index, mesh_desc) in scene.meshes.iter().enumerate() {
         let entry = archive
             .get(&mesh_desc.file)
@@ -192,25 +197,34 @@ pub fn export_animated_scene(
             animated_object_index: mapped_object_index,
             skin_binding,
         });
+        let p = 70 + ((mesh_scene_index + 1) * 25 / total_meshes);
+        progress(p as u8, "Processing meshes");
     }
 
     attach_skins(builder, primary_animation, &render_nodes);
-    attach_animations(builder, animations, &object_to_node, &render_nodes);
-    builder.runtime_metadata = Some(build_runtime_metadata(
-        scene,
-        animations,
-        &object_to_node,
-        &mesh_object_bindings,
-        &light_object_bindings,
-        &material_object_bindings,
-        &render_nodes,
-    ));
+    attach_animations(builder, scene, animations, &object_to_node, &render_nodes, js_scene);
 
     let scene_name = input_path
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or("scene");
+    progress(98, "Writing scene files");
     std::mem::take(builder).finish(scene_name, scene_roots, scene, output_dir)
+}
+
+fn selected_primary_animation<'a>(
+    scene: &Scene,
+    animations: &'a ParsedAnimationSet,
+) -> Option<&'a ParsedAnimation> {
+    let selected = scene
+        .anim_data
+        .as_ref()
+        .and_then(|anim| anim.selected_animation)
+        .unwrap_or(0);
+    animations
+        .animations
+        .get(selected)
+        .or_else(|| animations.animations.first())
 }
 
 fn object_name(object: &ParsedAnimatedObject) -> String {
@@ -288,16 +302,13 @@ fn attach_runtime_scene_bindings(
 fn build_runtime_metadata(
     scene: &Scene,
     animations: &ParsedAnimationSet,
+    primary_animation: &ParsedAnimation,
     object_to_node: &HashMap<usize, usize>,
     mesh_object_bindings: &HashMap<usize, usize>,
     light_object_bindings: &HashMap<usize, usize>,
     material_object_bindings: &HashMap<usize, usize>,
     render_nodes: &[RenderNodeBinding],
 ) -> serde_json::Value {
-    let primary_animation = animations
-        .animations
-        .first()
-        .expect("runtime metadata requires at least one animation");
     let mesh_runtime_bindings: Vec<_> = render_nodes
         .iter()
         .enumerate()
@@ -719,17 +730,28 @@ fn attach_skins(builder: &mut GltfBuilder, _primary_animation: &ParsedAnimation,
 
 fn attach_animations(
     builder: &mut GltfBuilder,
+    scene: &Scene,
     animations: &ParsedAnimationSet,
     object_to_node: &HashMap<usize, usize>,
     render_nodes: &[RenderNodeBinding],
+    js_scene: Option<&JsExportScene>,
 ) {
-    for animation in &animations.animations {
+    let selected_index = scene
+        .anim_data
+        .as_ref()
+        .and_then(|anim| anim.selected_animation);
+    for (animation_index, animation) in animations.animations.iter().enumerate() {
         if let Some(clip) = build_animation_clip(
             builder,
             animation,
             animations.scene_scale,
             object_to_node,
             render_nodes,
+            if selected_index == Some(animation_index) {
+                js_scene.and_then(|scene| scene.sampled_animation.as_ref())
+            } else {
+                None
+            },
         )
         {
             builder.animations.push(clip);
@@ -743,77 +765,93 @@ fn build_animation_clip(
     scene_scale: f32,
     object_to_node: &HashMap<usize, usize>,
     render_nodes: &[RenderNodeBinding],
+    sampled_animation: Option<&crate::js_export::JsSampledAnimation>,
 ) -> Option<AnimationDef> {
     let mut channels = Vec::new();
     let mut samplers = Vec::new();
 
-    for object_index in 0..animation.animated_objects.len() {
-        let Some(&node_index) = object_to_node.get(&object_index) else {
-            continue;
-        };
+    let used_sampled_animation = if let Some(sampled) = sampled_animation {
+        build_animation_channels_from_samples(
+            builder,
+            animation,
+            object_to_node,
+            sampled,
+            &mut channels,
+            &mut samplers,
+        )
+    } else {
+        false
+    };
 
-        let sample_times = collect_object_sample_times(animation, object_index);
-        if sample_times.len() <= 1 {
-            continue;
-        }
+    if !used_sampled_animation {
+        for object_index in 0..animation.animated_objects.len() {
+            let Some(&node_index) = object_to_node.get(&object_index) else {
+                continue;
+            };
 
-        let mut translations = Vec::with_capacity(sample_times.len());
-        let mut rotations = Vec::with_capacity(sample_times.len());
-        let mut scales = Vec::with_capacity(sample_times.len());
-        for seconds in sample_times.iter().copied() {
-            let local = compute_local_matrix(animation, object_index, seconds, scene_scale, object_to_node);
-            let (translation, rotation, scale) = decompose_matrix_trs(local);
-            translations.push(translation);
-            rotations.push(rotation);
-            scales.push(scale);
-        }
+            let sample_times = collect_object_sample_times(animation, object_index);
+            if sample_times.len() <= 1 {
+                continue;
+            }
 
-        if has_nontrivial_vec3_animation(&translations) {
-            let sampler_index = samplers.len();
-            samplers.push(AnimationSamplerDef {
-                input: builder.push_runtime_scalar_f32(&sample_times),
-                output: builder.push_runtime_f32x3(&translations),
-                interpolation: Some("LINEAR".to_string()),
-            });
-            channels.push(AnimationChannelDef {
-                sampler: sampler_index,
-                target: AnimationChannelTargetDef {
-                    node: node_index,
-                    path: "translation".to_string(),
-                },
-            });
-        }
+            let mut translations = Vec::with_capacity(sample_times.len());
+            let mut rotations = Vec::with_capacity(sample_times.len());
+            let mut scales = Vec::with_capacity(sample_times.len());
+            for seconds in sample_times.iter().copied() {
+                let local = compute_local_matrix(animation, object_index, seconds, scene_scale, object_to_node);
+                let (translation, rotation, scale) = decompose_matrix_trs(local);
+                translations.push(translation);
+                rotations.push(rotation);
+                scales.push(scale);
+            }
 
-        if has_nontrivial_quat_animation(&rotations) {
-            let sampler_index = samplers.len();
-            samplers.push(AnimationSamplerDef {
-                input: builder.push_runtime_scalar_f32(&sample_times),
-                output: builder.push_runtime_f32x4(&rotations),
-                interpolation: Some("LINEAR".to_string()),
-            });
-            channels.push(AnimationChannelDef {
-                sampler: sampler_index,
-                target: AnimationChannelTargetDef {
-                    node: node_index,
-                    path: "rotation".to_string(),
-                },
-            });
-        }
+            if has_nontrivial_vec3_animation(&translations) {
+                let sampler_index = samplers.len();
+                samplers.push(AnimationSamplerDef {
+                    input: builder.push_runtime_scalar_f32(&sample_times),
+                    output: builder.push_runtime_f32x3(&translations),
+                    interpolation: Some("LINEAR".to_string()),
+                });
+                channels.push(AnimationChannelDef {
+                    sampler: sampler_index,
+                    target: AnimationChannelTargetDef {
+                        node: node_index,
+                        path: "translation".to_string(),
+                    },
+                });
+            }
 
-        if has_nontrivial_vec3_animation(&scales) {
-            let sampler_index = samplers.len();
-            samplers.push(AnimationSamplerDef {
-                input: builder.push_runtime_scalar_f32(&sample_times),
-                output: builder.push_runtime_f32x3(&scales),
-                interpolation: Some("LINEAR".to_string()),
-            });
-            channels.push(AnimationChannelDef {
-                sampler: sampler_index,
-                target: AnimationChannelTargetDef {
-                    node: node_index,
-                    path: "scale".to_string(),
-                },
-            });
+            if has_nontrivial_quat_animation(&rotations) {
+                let sampler_index = samplers.len();
+                samplers.push(AnimationSamplerDef {
+                    input: builder.push_runtime_scalar_f32(&sample_times),
+                    output: builder.push_runtime_f32x4(&rotations),
+                    interpolation: Some("LINEAR".to_string()),
+                });
+                channels.push(AnimationChannelDef {
+                    sampler: sampler_index,
+                    target: AnimationChannelTargetDef {
+                        node: node_index,
+                        path: "rotation".to_string(),
+                    },
+                });
+            }
+
+            if has_nontrivial_vec3_animation(&scales) {
+                let sampler_index = samplers.len();
+                samplers.push(AnimationSamplerDef {
+                    input: builder.push_runtime_scalar_f32(&sample_times),
+                    output: builder.push_runtime_f32x3(&scales),
+                    interpolation: Some("LINEAR".to_string()),
+                });
+                channels.push(AnimationChannelDef {
+                    sampler: sampler_index,
+                    target: AnimationChannelTargetDef {
+                        node: node_index,
+                        path: "scale".to_string(),
+                    },
+                });
+            }
         }
     }
 
@@ -991,6 +1029,140 @@ fn compute_local_matrix(
     } else {
         local
     }
+}
+
+fn build_animation_channels_from_samples(
+    builder: &mut GltfBuilder,
+    animation: &ParsedAnimation,
+    object_to_node: &HashMap<usize, usize>,
+    sampled_animation: &crate::js_export::JsSampledAnimation,
+    channels: &mut Vec<AnimationChannelDef>,
+    samplers: &mut Vec<AnimationSamplerDef>,
+) -> bool {
+    if sampled_animation.samples.len() <= 1 {
+        return false;
+    }
+
+    let mut added_any = false;
+    for object_index in 0..animation.animated_objects.len() {
+        let Some(&node_index) = object_to_node.get(&object_index) else {
+            continue;
+        };
+
+        let mut sample_times = Vec::with_capacity(sampled_animation.samples.len());
+        let mut translations = Vec::with_capacity(sampled_animation.samples.len());
+        let mut rotations = Vec::with_capacity(sampled_animation.samples.len());
+        let mut scales = Vec::with_capacity(sampled_animation.samples.len());
+
+        for sample in &sampled_animation.samples {
+            let Some(local_matrix) =
+                sampled_local_matrix_for_object(animation, object_index, sample, sampled_animation)
+            else {
+                continue;
+            };
+            sample_times.push(sample.seconds);
+            let (translation, rotation, scale) = decompose_matrix_trs(local_matrix);
+            translations.push(translation);
+            rotations.push(rotation);
+            scales.push(scale);
+        }
+
+        if sample_times.len() <= 1 {
+            continue;
+        }
+
+        if has_nontrivial_vec3_animation(&translations) {
+            let sampler_index = samplers.len();
+            samplers.push(AnimationSamplerDef {
+                input: builder.push_runtime_scalar_f32(&sample_times),
+                output: builder.push_runtime_f32x3(&translations),
+                interpolation: Some("LINEAR".to_string()),
+            });
+            channels.push(AnimationChannelDef {
+                sampler: sampler_index,
+                target: AnimationChannelTargetDef {
+                    node: node_index,
+                    path: "translation".to_string(),
+                },
+            });
+            added_any = true;
+        }
+
+        if has_nontrivial_quat_animation(&rotations) {
+            let sampler_index = samplers.len();
+            samplers.push(AnimationSamplerDef {
+                input: builder.push_runtime_scalar_f32(&sample_times),
+                output: builder.push_runtime_f32x4(&rotations),
+                interpolation: Some("LINEAR".to_string()),
+            });
+            channels.push(AnimationChannelDef {
+                sampler: sampler_index,
+                target: AnimationChannelTargetDef {
+                    node: node_index,
+                    path: "rotation".to_string(),
+                },
+            });
+            added_any = true;
+        }
+
+        if has_nontrivial_vec3_animation(&scales) {
+            let sampler_index = samplers.len();
+            samplers.push(AnimationSamplerDef {
+                input: builder.push_runtime_scalar_f32(&sample_times),
+                output: builder.push_runtime_f32x3(&scales),
+                interpolation: Some("LINEAR".to_string()),
+            });
+            channels.push(AnimationChannelDef {
+                sampler: sampler_index,
+                target: AnimationChannelTargetDef {
+                    node: node_index,
+                    path: "scale".to_string(),
+                },
+            });
+            added_any = true;
+        }
+    }
+
+    added_any
+}
+
+fn sampled_local_matrix_for_object(
+    animation: &ParsedAnimation,
+    object_index: usize,
+    sample: &JsAnimationSample,
+    sampled_animation: &crate::js_export::JsSampledAnimation,
+) -> Option<[f32; 16]> {
+    let object = &animation.animated_objects[object_index];
+    let world = sample
+        .objects
+        .iter()
+        .find(|entry| entry.id == object_index)?
+        .world_matrix;
+
+    if object.desc.parent_index == object_index {
+        return Some(world);
+    }
+
+    let parent_world = sample
+        .objects
+        .iter()
+        .find(|entry| entry.id == object.desc.parent_index)
+        .map(|entry| entry.world_matrix)
+        .or_else(|| {
+            sampled_animation
+                .samples
+                .first()
+                .and_then(|first| {
+                    first
+                        .objects
+                        .iter()
+                        .find(|entry| entry.id == object.desc.parent_index)
+                        .map(|entry| entry.world_matrix)
+                })
+        })?;
+
+    let parent_inverse = crate::gltf::invert_matrix4(&parent_world)?;
+    Some(mul_matrix4(&parent_inverse, &world))
 }
 
 fn sample_cluster_matrix(

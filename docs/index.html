@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>mviewer</title>
+  <meta name="description" content="Rust-native exporter for Marmoset .mview scenes.">
+  <link rel="stylesheet" href="site.css">
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">mviewer 2.0.0</p>
+      <h1>Export Marmoset <code>.mview</code> scenes to glTF.</h1>
+      <p class="lead">
+        mviewer is a Rust-native exporter for static and animated Marmoset Viewer scenes.
+        It reads <code>.mview</code> archives directly and writes glTF, texture assets,
+        a runtime sidecar, and a generated browser viewer.
+      </p>
+      <div class="actions">
+        <a class="button primary" href="https://github.com/majimboo/mviewer/releases/tag/v2.0.0">Download v2.0.0</a>
+        <a class="button" href="https://github.com/majimboo/mviewer">View on GitHub</a>
+      </div>
+      <p class="meta">Release builds are produced for Windows x64, Linux x64, macOS arm64, and macOS x64.</p>
+    </section>
+
+    <section class="preview">
+      <img src="images/vivfox-exporter-screenshot.png" alt="mviewer export preview">
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>What it exports</h2>
+        <ul>
+          <li>Static and animated <code>.gltf</code> scenes</li>
+          <li>Meshes, skins, animation, cameras, and lights</li>
+          <li>Textures plus merged alpha / metallic-roughness maps</li>
+          <li><code>mviewer.runtime.json</code> and generated <code>viewer.html</code></li>
+        </ul>
+      </article>
+      <article class="card">
+        <h2>Install</h2>
+        <ul>
+          <li>Download the archive for your platform from Releases</li>
+          <li>Extract it anywhere</li>
+          <li>Run <code>mviewer --help</code> to verify the install</li>
+        </ul>
+      </article>
+      <article class="card">
+        <h2>Quick start</h2>
+        <pre><code>mviewer input.mview output_dir</code></pre>
+        <p>The exporter writes a glTF scene, binary buffer, textures, runtime sidecar, and browser viewer.</p>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

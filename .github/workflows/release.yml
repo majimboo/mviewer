@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Release build (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux-x64
+            archive_name: mviewer-${{ github.ref_name }}-linux-x64.tar.gz
+            bin_name: mviewer
+          - os: windows-latest
+            label: windows-x64
+            archive_name: mviewer-${{ github.ref_name }}-windows-x64.zip
+            bin_name: mviewer.exe
+          - os: macos-14
+            label: macos-arm64
+            archive_name: mviewer-${{ github.ref_name }}-macos-arm64.tar.gz
+            bin_name: mviewer
+          - os: macos-13
+            label: macos-x64
+            archive_name: mviewer-${{ github.ref_name }}-macos-x64.tar.gz
+            bin_name: mviewer
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Prepare package directory
+        shell: bash
+        run: |
+          mkdir -p dist/mviewer
+          cp README.md dist/mviewer/README.md
+          cp LICENSE 2>/dev/null dist/mviewer/LICENSE || true
+          cp target/release/${{ matrix.bin_name }} dist/mviewer/${{ matrix.bin_name }}
+
+      - name: Archive release bundle (tar.gz)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          tar -czf dist/${{ matrix.archive_name }} -C dist mviewer
+
+      - name: Archive release bundle (zip)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          Compress-Archive -Path dist\mviewer -DestinationPath dist\${{ matrix.archive_name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.label }}
+          path: dist/${{ matrix.archive_name }}
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-artifacts/*/*

@@ -1,0 +1,148 @@
+:root {
+  --bg: #f4efe7;
+  --panel: #fffaf1;
+  --text: #1d1b18;
+  --muted: #5c554b;
+  --accent: #b44f2f;
+  --accent-dark: #8f3a21;
+  --line: rgba(29, 27, 24, 0.12);
+  --shadow: 0 18px 50px rgba(54, 35, 21, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(180, 79, 47, 0.18), transparent 28rem),
+    linear-gradient(180deg, #f8f3eb 0%, var(--bg) 100%);
+}
+
+code,
+pre {
+  font-family: "Cascadia Code", Consolas, monospace;
+}
+
+.page {
+  width: min(1100px, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 3rem 0 4rem;
+}
+
+.hero {
+  padding: 2rem 0 1rem;
+}
+
+.eyebrow {
+  margin: 0 0 1rem;
+  font-size: 0.85rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent-dark);
+}
+
+h1,
+h2 {
+  line-height: 1.05;
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(2.5rem, 6vw, 5.4rem);
+  max-width: 12ch;
+}
+
+.lead,
+.meta,
+.card p,
+.card li {
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1.6;
+}
+
+.lead {
+  max-width: 52rem;
+  margin: 1.25rem 0 0;
+}
+
+.actions {
+  display: flex;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  margin: 1.6rem 0 0.75rem;
+}
+
+.button {
+  display: inline-block;
+  padding: 0.95rem 1.35rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  text-decoration: none;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.button.primary {
+  background: var(--accent);
+  color: #fff8f3;
+  border-color: var(--accent);
+}
+
+.preview {
+  margin: 2rem 0 2.4rem;
+}
+
+.preview img {
+  display: block;
+  width: 100%;
+  border-radius: 1.5rem;
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.card {
+  padding: 1.4rem;
+  border: 1px solid var(--line);
+  border-radius: 1.25rem;
+  background: color-mix(in srgb, var(--panel) 92%, white);
+  box-shadow: var(--shadow);
+}
+
+.card h2 {
+  font-size: 1.4rem;
+  margin-bottom: 0.8rem;
+}
+
+.card ul {
+  padding-left: 1.2rem;
+  margin: 0;
+}
+
+.card pre {
+  padding: 0.9rem 1rem;
+  border-radius: 1rem;
+  background: #1f1713;
+  color: #fdf7f0;
+  overflow-x: auto;
+}
+
+@media (max-width: 860px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .page {
+    width: min(100% - 1.25rem, 48rem);
+  }
+}

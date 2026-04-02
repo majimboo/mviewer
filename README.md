@@ -2,14 +2,6 @@
 
 Rust-native exporter for Marmoset `.mview` scenes.
 
-mviewer is a Rust-native Marmoset `.mview` viewer, exporter, and converter focused on `.mview` to glTF export.
-
-If you are looking for an `mview viewer`, `mview editor`, `mview to gltf`, `mview to fbx`, or `mview to obj` workflow, the current project path is:
-
-`.mview` -> `glTF` -> optional conversion to `FBX`, `OBJ`, Blender, or other formats
-
-This repository no longer uses the old Python extractors or the Noesis plugin as its primary workflow. The current implementation reads `.mview` archives directly, reconstructs the scene, exports glTF, and emits a runtime playback page for preserved Marmoset-specific behavior.
-
 ![vivfox export preview](docs/images/vivfox-exporter-screenshot.png)
 
 ## Download
@@ -129,6 +121,16 @@ After export, open `viewer.html` from the output directory in a browser. It load
 - sampled light and camera properties
 - sampled material UV and emissive properties
 - preserved fog / sky / shadow-floor scene data
+
+## Workflow Notes
+
+mviewer is a Rust-native Marmoset `.mview` viewer, exporter, and converter focused on `.mview` to glTF export.
+
+If you are looking for an `mview viewer`, `mview editor`, `mview to gltf`, `mview to fbx`, or `mview to obj` workflow, the current project path is:
+
+`.mview` -> `glTF` -> optional conversion to `FBX`, `OBJ`, Blender, or other formats
+
+This repository no longer uses the old Python extractors or the Noesis plugin as its primary workflow. The current implementation reads `.mview` archives directly, reconstructs the scene, exports glTF, and emits a runtime playback page for preserved Marmoset-specific behavior.
 
 ## Current Limitations
 

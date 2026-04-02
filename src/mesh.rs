@@ -54,7 +54,7 @@ pub fn decode_mesh(bytes: &[u8], mesh: &MeshDesc) -> Result<DecodedMesh> {
 
         texcoords.push([
             cursor.read_f32::<LittleEndian>()?,
-            cursor.read_f32::<LittleEndian>()?,
+            -cursor.read_f32::<LittleEndian>()?,
         ]);
 
         if has_secondary_uv {

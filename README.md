@@ -1,86 +1,74 @@
-MView File Viewer
-=================
+# mviewer
 
-This project consists of 2 scripts. `extract_mview` to extract files inside the mview archive and `extract_model` to convert the `.dat` files to `.obj`.
+Rust-native exporter for Marmoset `.mview` scenes.
 
-Also includes a Noesis plugin. (see below)
+This repository no longer uses the old Python extractors or the Noesis plugin as its primary workflow. The current implementation reads the `.mview` archive directly, exports a glTF scene, and emits a runtime playback page for preserved Marmoset state.
 
-**Example**
+## Status
 
-File downloaded from [ArtStation](https://www.artstation.com/artwork/3LBbA).
+Current exporter support:
 
-**Result**
-![](http://i.imgur.com/EFu0Hg1.png)
+- `.mview` archive parsing
+- `scene.json` parsing
+- static and animated export to `.gltf` + external `.bin`
+- mesh transforms, skins, and animation export
+- primary UVs
+- packed normal decoding
+- vertex colors when present
+- material export with base color, normal, alpha merge, and metallic-roughness packing
+- camera and light export with runtime bindings
+- raw archive preservation under `mviewer_raw/`
+- source scene preservation in glTF `extras`
+- `MVIEWER_marmoset_runtime` extension output with sampled runtime state
+- generated `viewer.html` runtime player
 
-Requirements
-============
+Remaining limitations:
 
-- Python 3.6.1 or later [[download](https://www.python.org/downloads/)]
+- stock third-party glTF viewers will ignore `MVIEWER_marmoset_runtime`
+- full behavior parity depends on the generated runtime player, not plain glTF semantics alone
+- `.glb` output
 
-Usage
-=====
+## Build
 
-    // extract mview archive
-    // python extract_mview.py <filename>
-    $ python extract_mview.py test_data/test_file1.mview
-    $ > thumbnail.jpg image/jpeg
-    $ > sky.dat image/derp
-    $ > mesh0.dat model/mset
-    $ > mesh1.dat model/mset
-    $ > mesh2.dat model/mset
-    $ > mesh3.dat model/mset
-    $ > mesh4.dat model/mset
-    $ > mesh5.dat model/mset
-    $ > mesh6.dat model/mset
-    $ > mat0_c.jpg image/jpeg
-    $ > mat0_r.jpg image/jpeg
-    $ > mat0_n.jpg image/jpeg
-    $ > mat0_a.jpg image/jpeg
-    $ > mat0_g.jpg image/jpeg
-    $ > mat0_s.jpg image/jpeg
-    $ > mat1_c.jpg image/jpeg
-    $ > mat1_n.jpg image/jpeg
-    $ > mat2_c.jpg image/jpeg
-    $ > mat3_c.jpg image/jpeg
-    $ > mat4_c.jpg image/jpeg
-    $ > mat4_a.jpg image/jpeg
-    $ > mat5_c.jpg image/jpeg
-    $ > mat5_a.jpg image/jpeg
-    $ > mat5_s.jpg image/jpeg
-    $ > mat6_c.jpg image/jpeg
-    $ > mat6_a.jpg image/jpeg
-    $ > scene.json.sig application/json
-    $ > scene.json application/json
-    $ > COMPLETED!!!
+```powershell
+cargo build --release
+```
 
-    // convert dat files to obj (wavefront)
-    // python extract_model.py <folder_containing_scene.json>
-    $ python extract_model.py test_data/test_file1
-    $ > COMPLETED!!!
+## Usage
 
-Viewer
-======
+```powershell
+cargo run -- <input.mview> [output_dir]
+```
 
-You can download Noesis from [here](https://richwhitehouse.com/index.php?content=inc_projects.php&showproject=91). Copy and paste the plugin to `noesis/plugins/python/fmt_artstation_mview.py` then just open the `.mview` files with Noesis.
+Example:
 
-![](http://i.imgur.com/LgUFvEF.png)
+```powershell
+cargo run -- test_data\vivfox.mview test_output\vivfox
+```
 
-Notes
-=====
+This writes:
 
-To download an `.mview` file:
+- `<name>.gltf`
+- `<name>.bin`
+- `viewer.html`
+- copied texture files used by the scene
+- merged `*_rgba.png` textures when the source scene uses a separate alpha map
+- `mviewer_raw/` with all source archive entries
 
-1. Open url with 3D viewer in browser. (do not click play yet)
-2. Open **Developer Tools** and go to **Network** tab.
-3. Click the play button on the 3D viewer.
-4. Type or search for `mview` on the **Developer Tools' Network** tab.
-5. Right click on the file and select `open in new tab`. (will start download)
+## Runtime Playback
 
-**[FIXED]** ~~[BUG] There is currently no support for huge files that uses uint32 indices. Pull requests are welcome.~~
+After export, open `viewer.html` from the output directory in a browser. It loads the generated glTF, consumes `MVIEWER_marmoset_runtime`, and applies preserved runtime state such as:
 
-Community
-=========
+- evaluated object transforms
+- inherited visibility
+- sampled light and camera properties
+- sampled material UV and emissive properties
+- preserved fog / sky / shadow-floor scene data
 
-- [Xentax Forum](http://forum.xentax.com) @majidemo, @shakotay2, @TaylorMouse
-- [Marmoset Toolbag](https://www.marmoset.co/viewer)
-- [ArtStation](https://www.artstation.com/artwork/3LBbA)
+## Reverse Engineering References
+
+These files are still kept in the repo as format references:
+
+- `docs/reverse-engineering/marmoset-d3f745560e47d383adc4f6a322092030.js`
+
+The newer bundled Marmoset JavaScript is the primary reference for format and runtime parity work.

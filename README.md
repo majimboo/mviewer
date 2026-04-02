@@ -15,7 +15,14 @@ Prebuilt binaries are published from GitHub Actions releases:
 - macOS arm64
 - macOS x64
 
-Current release: [`v2.0.0`](https://github.com/majimboo/mviewer/releases/tag/v2.0.0)
+Latest release: [`latest`](https://github.com/majimboo/mviewer/releases/latest)
+
+Download the archive that matches your platform:
+
+- Windows 64-bit: `mviewer-vX.Y.Z-windows-x64.zip`
+- Linux 64-bit: `mviewer-vX.Y.Z-linux-x64.tar.gz`
+- macOS Apple Silicon: `mviewer-vX.Y.Z-macos-arm64.tar.gz`
+- macOS Intel: `mviewer-vX.Y.Z-macos-x64.tar.gz`
 
 After extracting a release archive, run:
 
@@ -55,7 +62,7 @@ mviewer input.mview output_dir
 Example:
 
 ```powershell
-cargo run --release -- test_data\vivfox.mview test_output\vivfox
+mviewer test_data\vivfox.mview test_output\vivfox
 ```
 
 This writes:
@@ -95,15 +102,6 @@ After export, open `viewer.html` from the output directory in a browser. It load
 - sampled light and camera properties
 - sampled material UV and emissive properties
 - preserved fog / sky / shadow-floor scene data
-
-## CI And Releases
-
-The repo includes:
-
-- CI builds on Windows, Linux, and macOS
-- sample export verification on Ubuntu
-- tag-driven release packaging for downloadable binaries
-- GitHub Pages publishing from `docs/`
 
 ## Reverse Engineering References
 

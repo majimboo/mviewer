@@ -28,11 +28,11 @@ jobs:
             label: windows-x64
             archive_name: mviewer-${{ github.ref_name }}-windows-x64.zip
             bin_name: mviewer.exe
-          - os: macos-14
+          - os: macos-latest
             label: macos-arm64
             archive_name: mviewer-${{ github.ref_name }}-macos-arm64.tar.gz
             bin_name: mviewer
-          - os: macos-13
+          - os: macos-15-intel
             label: macos-x64
             archive_name: mviewer-${{ github.ref_name }}-macos-x64.tar.gz
             bin_name: mviewer

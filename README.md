@@ -2,7 +2,13 @@
 
 Rust-native exporter for Marmoset `.mview` scenes.
 
-This repository no longer uses the old Python extractors or the Noesis plugin as its primary workflow. The current implementation reads the `.mview` archive directly, exports a glTF scene, and emits a runtime playback page for preserved Marmoset state.
+mviewer is a Rust-native Marmoset `.mview` viewer, exporter, and converter focused on `.mview` to glTF export.
+
+If you are looking for an `mview viewer`, `mview editor`, `mview to gltf`, `mview to fbx`, or `mview to obj` workflow, the current project path is:
+
+`.mview` -> `glTF` -> optional conversion to `FBX`, `OBJ`, Blender, or other formats
+
+This repository no longer uses the old Python extractors or the Noesis plugin as its primary workflow. The current implementation reads `.mview` archives directly, reconstructs the scene, exports glTF, and emits a runtime playback page for preserved Marmoset-specific behavior.
 
 ![vivfox export preview](docs/images/vivfox-exporter-screenshot.png)
 
@@ -30,28 +36,37 @@ After extracting a release archive, run:
 mviewer --help
 ```
 
-## What It Does
+## Feature Parity
 
-Current exporter support:
+### Marmoset `.mview` / JS Parity
 
-- `.mview` archive parsing
-- `scene.json` parsing
-- static and animated export to `.gltf` + external `.bin`
-- mesh transforms, skins, and animation export
-- primary UVs
-- packed normal decoding
-- vertex colors when present
-- material export with base color, normal, alpha merge, and metallic-roughness packing
-- camera and light export with runtime bindings
-- raw archive preservation under `mviewer_raw/`
-- runtime sidecar export to `mviewer.runtime.json`
-- generated `viewer.html` runtime player
+- [x] `.mview` archive parsing
+- [x] `scene.json` parsing
+- [x] static glTF scene export
+- [x] animated glTF scene export
+- [x] skinning export
+- [x] camera export
+- [x] light export
+- [x] primary UV export
+- [x] corrected UV orientation parity
+- [x] packed normal decoding
+- [x] vertex color export
+- [x] material texture extraction
+- [x] alpha texture merge
+- [x] metallic-roughness texture packing
+- [x] generated browser viewer for runtime sidecar playback
+- [ ] full plain-glTF parity for all Marmoset-only runtime behavior
+- [ ] `.glb` output
+- [ ] direct `FBX` export
+- [ ] direct `OBJ` export
 
-Current limitations:
+### Project Features
 
-- stock third-party glTF viewers only see the standard glTF export
-- full behavior parity depends on the generated runtime player plus `mviewer.runtime.json`, not plain glTF semantics alone
-- `.glb` output
+- [x] Rust-native command-line tool
+- [x] Windows, Linux, and macOS builds
+- [x] GitHub Actions CI and release packaging
+- [x] GitHub Pages project site
+- [x] sample animated fixtures in-repo
 
 ## Quick Start
 
@@ -74,6 +89,18 @@ This writes:
 - copied texture files used by the scene
 - merged `*_rgba.png` textures when the source scene uses a separate alpha map
 - `mviewer_raw/` with all source archive entries
+
+## Output Formats
+
+mviewer exports `.mview` scenes to glTF directly.
+
+If you need other formats:
+
+- `mview to fbx`: export to glTF first, then convert with Blender or another downstream tool
+- `mview to obj`: export to glTF first, then convert if you only need static geometry/materials
+- `mview to blender`: import the generated glTF into Blender
+
+glTF is the primary interchange format because it preserves modern materials, skins, animation, cameras, and lights better than the old script-based workflow.
 
 ## Build From Source
 
@@ -102,6 +129,12 @@ After export, open `viewer.html` from the output directory in a browser. It load
 - sampled light and camera properties
 - sampled material UV and emissive properties
 - preserved fog / sky / shadow-floor scene data
+
+## Current Limitations
+
+- stock third-party glTF viewers only see the standard glTF export
+- full behavior parity depends on the generated runtime player plus `mviewer.runtime.json`, not plain glTF semantics alone
+- direct `.glb`, `FBX`, and `OBJ` export are not implemented yet
 
 ## Reverse Engineering References
 

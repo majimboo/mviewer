@@ -10,18 +10,18 @@
 <body>
   <main class="page">
     <section class="hero">
-      <p class="eyebrow">mviewer latest release</p>
-      <h1>Export Marmoset <code>.mview</code> scenes to glTF.</h1>
+      <p class="eyebrow">mview viewer and exporter</p>
+      <h1>Convert Marmoset <code>.mview</code> scenes to glTF.</h1>
       <p class="lead">
-        mviewer is a Rust-native exporter for static and animated Marmoset Viewer scenes.
-        It reads <code>.mview</code> archives directly and writes glTF, texture assets,
-        a runtime sidecar, and a generated browser viewer.
+        mviewer is a Rust-native <code>.mview</code> viewer, exporter, and converter for static
+        and animated Marmoset Viewer scenes. It is designed for users searching for an
+        mview viewer, mview editor, mview to gltf, mview to fbx, or mview to obj workflow.
       </p>
       <div class="actions">
         <a class="button primary" href="https://github.com/majimboo/mviewer/releases/latest">Download latest release</a>
         <a class="button" href="https://github.com/majimboo/mviewer">View on GitHub</a>
       </div>
-      <p class="meta">Release builds are produced for Windows x64, Linux x64, macOS arm64, and macOS x64.</p>
+      <p class="meta">mviewer exports to glTF directly. If you need FBX or OBJ, use the generated glTF as the intermediate format.</p>
     </section>
 
     <section class="preview">
@@ -53,6 +53,10 @@
         <h2>Quick start</h2>
         <pre><code>mviewer input.mview output_dir</code></pre>
         <p>The exporter writes a glTF scene, binary buffer, textures, runtime sidecar, and browser viewer.</p>
+      </article>
+      <article class="card">
+        <h2>Why glTF first</h2>
+        <p>glTF preserves materials, skins, animation, cameras, and lights better than the old workflow. From there you can convert to FBX, OBJ, Blender, or other formats if needed.</p>
       </article>
     </section>
   </main>

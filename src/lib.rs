@@ -54,6 +54,12 @@ pub struct ExportReport {
     pub total_meshes: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextureExportFormat {
+    Png,
+    Tga,
+}
+
 impl ExportOptions {
     pub fn include_all(scene: &Scene) -> Self {
         Self {
@@ -127,6 +133,57 @@ pub fn default_output_dir(input: &Path) -> PathBuf {
         .and_then(|stem| stem.to_str())
         .unwrap_or("scene");
     input.parent().unwrap_or_else(|| Path::new(".")).join(format!("{stem}_gltf"))
+}
+
+pub fn export_texture_asset(
+    project: &ProjectDocument,
+    texture_name: &str,
+    output_dir: &Path,
+    format: TextureExportFormat,
+) -> Result<PathBuf> {
+    let entry = project
+        .archive
+        .get(texture_name)
+        .with_context(|| format!("missing texture {}", texture_name))?;
+    let image = image::load_from_memory(&entry.data)
+        .with_context(|| format!("failed to decode texture {}", texture_name))?;
+    std::fs::create_dir_all(output_dir)
+        .with_context(|| format!("failed to create {}", output_dir.display()))?;
+
+    let stem = Path::new(texture_name)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("texture");
+    let ext = match format {
+        TextureExportFormat::Png => "png",
+        TextureExportFormat::Tga => "tga",
+    };
+    let output_path = output_dir.join(format!("{}.{}", sanitize_filename(stem), ext));
+    let image_format = match format {
+        TextureExportFormat::Png => image::ImageFormat::Png,
+        TextureExportFormat::Tga => image::ImageFormat::Tga,
+    };
+    image
+        .save_with_format(&output_path, image_format)
+        .with_context(|| format!("failed to write {}", output_path.display()))?;
+    Ok(output_path)
+}
+
+fn sanitize_filename(input: &str) -> String {
+    let mut cleaned = String::with_capacity(input.len());
+    for ch in input.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' || ch == '_' {
+            cleaned.push(ch);
+        } else {
+            cleaned.push('_');
+        }
+    }
+    let cleaned = cleaned.trim_matches('_');
+    if cleaned.is_empty() {
+        "texture".to_string()
+    } else {
+        cleaned.to_string()
+    }
 }
 
 fn filtered_scene(scene: &Scene, options: &ExportOptions) -> Scene {

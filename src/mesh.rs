@@ -1,4 +1,4 @@
-use std::io::{Cursor, Read};
+use std::io::Cursor;
 
 use anyhow::{Context, Result, bail};
 use byteorder::{LittleEndian, ReadBytesExt};
@@ -12,6 +12,7 @@ pub struct DecodedMesh {
     pub tangents: Vec<[f32; 3]>,
     pub bitangents: Vec<[f32; 3]>,
     pub texcoords: Vec<[f32; 2]>,
+    pub secondary_texcoords: Option<Vec<[f32; 2]>>,
     pub colors: Option<Vec<[f32; 4]>>,
     pub indices: Vec<u32>,
 }
@@ -43,6 +44,11 @@ pub fn decode_mesh(bytes: &[u8], mesh: &MeshDesc) -> Result<DecodedMesh> {
     let mut tangents = Vec::with_capacity(mesh.vertex_count);
     let mut bitangents = Vec::with_capacity(mesh.vertex_count);
     let mut texcoords = Vec::with_capacity(mesh.vertex_count);
+    let mut secondary_texcoords = if has_secondary_uv {
+        Some(Vec::with_capacity(mesh.vertex_count))
+    } else {
+        None
+    };
     let mut colors = if has_vertex_color {
         Some(Vec::with_capacity(mesh.vertex_count))
     } else {
@@ -62,8 +68,13 @@ pub fn decode_mesh(bytes: &[u8], mesh: &MeshDesc) -> Result<DecodedMesh> {
         ]);
 
         if has_secondary_uv {
-            let mut skip = [0u8; 8];
-            cursor.read_exact(&mut skip)?;
+            let uv = [
+                cursor.read_f32::<LittleEndian>()?,
+                -cursor.read_f32::<LittleEndian>()?,
+            ];
+            if let Some(secondary) = &mut secondary_texcoords {
+                secondary.push(uv);
+            }
         }
 
         tangents.push(unpack_unit_vector(
@@ -94,6 +105,7 @@ pub fn decode_mesh(bytes: &[u8], mesh: &MeshDesc) -> Result<DecodedMesh> {
         tangents,
         bitangents,
         texcoords,
+        secondary_texcoords,
         colors,
         indices: all_indices,
     })

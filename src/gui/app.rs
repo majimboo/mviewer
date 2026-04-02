@@ -1,10 +1,15 @@
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use eframe::{CreationContext, egui};
+use image::imageops::FilterType;
 use rfd::FileDialog;
 
-use crate::{ExportOptions, ProjectDocument, default_output_dir, export_project, load_project};
+use crate::{
+    ExportOptions, ProjectDocument, TextureExportFormat, default_output_dir, export_project,
+    export_texture_asset, load_project,
+};
 use crate::gui::viewer::RuntimeViewer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -32,6 +37,8 @@ pub struct MviewerGuiApp {
     selected_animation_index: Option<usize>,
     animation_time: f32,
     animation_playing: bool,
+    texture_export_format: TextureExportFormat,
+    texture_preview_cache: HashMap<String, egui::TextureHandle>,
 }
 
 impl Default for MviewerGuiApp {
@@ -52,6 +59,8 @@ impl Default for MviewerGuiApp {
             selected_animation_index: None,
             animation_time: 0.0,
             animation_playing: false,
+            texture_export_format: TextureExportFormat::Png,
+            texture_preview_cache: HashMap::new(),
         }
     }
 }
@@ -86,6 +95,7 @@ impl MviewerGuiApp {
                     .as_ref()
                     .and_then(|anim| anim.auto_play_anims)
                     .unwrap_or(false);
+                self.texture_preview_cache.clear();
                 self.status = format!("Loaded {}", path.display());
                 self.project = Some(project);
                 self.active_tab = NavTab::Scene;
@@ -134,6 +144,22 @@ impl MviewerGuiApp {
             }
             Err(err) => {
                 self.status = format!("Export failed: {err:#}");
+            }
+        }
+    }
+
+    fn export_texture(&mut self, texture_name: &str) {
+        let Some(project) = &self.project else {
+            self.status = "Load a .mview file first.".to_string();
+            return;
+        };
+        let output_dir = PathBuf::from(self.output_dir.trim()).join("textures");
+        match export_texture_asset(project, texture_name, &output_dir, self.texture_export_format) {
+            Ok(path) => {
+                self.status = format!("Exported texture to {}", path.display());
+            }
+            Err(err) => {
+                self.status = format!("Texture export failed: {err:#}");
             }
         }
     }
@@ -287,6 +313,8 @@ impl MviewerGuiApp {
 
     fn draw_materials_tab(&mut self, ui: &mut egui::Ui, project: &ProjectDocument) {
         ui.heading("Materials");
+        texture_export_format_picker(ui, &mut self.texture_export_format);
+        ui.add_space(8.0);
         ui.columns(2, |columns| {
             columns[0].group(|ui| {
                 for (index, material) in project.runtime.materials.iter().enumerate() {
@@ -310,9 +338,8 @@ impl MviewerGuiApp {
                             ),
                             "Preview color",
                         );
-                        for texture in &material.textures {
-                            ui.label(format!("{}: {}", texture.slot, texture.name));
-                        }
+                        ui.add_space(6.0);
+                        self.draw_texture_list(ui, project, &material.textures);
                     }
                 } else {
                     ui.label("Select a material.");
@@ -396,6 +423,74 @@ impl MviewerGuiApp {
             self.export_selected();
         }
     }
+
+    fn draw_texture_list(
+        &mut self,
+        ui: &mut egui::Ui,
+        project: &ProjectDocument,
+        textures: &[crate::runtime::RuntimeTextureRef],
+    ) {
+        egui::ScrollArea::horizontal()
+            .id_salt("texture_preview_list")
+            .max_width(ui.available_width())
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    for texture in textures {
+                        ui.group(|ui| {
+                            ui.set_min_width(180.0);
+                            if let Some(handle) =
+                                self.ensure_texture_preview(ui.ctx(), project, &texture.name)
+                            {
+                                let image =
+                                    egui::Image::new(&handle).fit_to_exact_size(egui::vec2(72.0, 72.0));
+                                ui.add(image);
+                            } else {
+                                ui.allocate_ui(egui::vec2(72.0, 72.0), |ui| {
+                                    ui.centered_and_justified(|ui| ui.small("No preview"));
+                                });
+                            }
+                            ui.label(format!("{}:", texture.slot));
+                            ui.small(&texture.name);
+                            if ui.button("Export").clicked() {
+                                self.export_texture(&texture.name);
+                            }
+                        });
+                    }
+                });
+            });
+    }
+
+    fn ensure_texture_preview(
+        &mut self,
+        ctx: &egui::Context,
+        project: &ProjectDocument,
+        texture_name: &str,
+    ) -> Option<egui::TextureHandle> {
+        let key = format!("{}:{}", project.input_path.display(), texture_name);
+        if let Some(existing) = self.texture_preview_cache.get(&key) {
+            return Some(existing.clone());
+        }
+        let entry = project.archive.get(texture_name)?;
+        let image = image::load_from_memory(&entry.data).ok()?;
+        let preview = image.resize(128, 128, FilterType::Triangle).to_rgba8();
+        let size = [preview.width() as usize, preview.height() as usize];
+        let color_image = egui::ColorImage::from_rgba_unmultiplied(size, preview.as_raw());
+        let handle = ctx.load_texture(
+            key.clone(),
+            color_image,
+            egui::TextureOptions::LINEAR,
+        );
+        self.texture_preview_cache.insert(key, handle.clone());
+        Some(handle)
+    }
+}
+
+fn texture_export_format_picker(ui: &mut egui::Ui, format: &mut TextureExportFormat) {
+    ui.horizontal(|ui| {
+        ui.label("Texture export:");
+        ui.selectable_value(format, TextureExportFormat::Png, "PNG");
+        ui.selectable_value(format, TextureExportFormat::Tga, "TGA");
+    });
 }
 
 impl eframe::App for MviewerGuiApp {
@@ -442,15 +537,19 @@ impl eframe::App for MviewerGuiApp {
             }
 
             let project = self.project.take().expect("project checked above");
-            self.draw_runtime_panel(ui, &project);
-            ui.add_space(10.0);
+            egui::ScrollArea::vertical()
+                .id_salt("central_content_scroll")
+                .show(ui, |ui| {
+                    self.draw_runtime_panel(ui, &project);
+                    ui.add_space(10.0);
 
-            match self.active_tab {
-                NavTab::Scene => self.draw_scene_tab(ui, &project),
-                NavTab::Materials => self.draw_materials_tab(ui, &project),
-                NavTab::Animations => self.draw_animations_tab(ui, &project),
-                NavTab::Export => self.draw_export_tab(ui, &project),
-            }
+                    match self.active_tab {
+                        NavTab::Scene => self.draw_scene_tab(ui, &project),
+                        NavTab::Materials => self.draw_materials_tab(ui, &project),
+                        NavTab::Animations => self.draw_animations_tab(ui, &project),
+                        NavTab::Export => self.draw_export_tab(ui, &project),
+                    }
+                });
 
             self.project = Some(project);
         });

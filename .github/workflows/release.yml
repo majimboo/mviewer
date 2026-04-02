@@ -56,6 +56,60 @@ jobs:
           cp README.md dist/mviewer/README.md
           cp LICENSE 2>/dev/null dist/mviewer/LICENSE || true
           cp target/release/${{ matrix.bin_name }} dist/mviewer/${{ matrix.bin_name }}
+          if [ -f target/release/mviewer-gui ]; then cp target/release/mviewer-gui dist/mviewer/mviewer-gui; fi
+          if [ -f target/release/mviewer-gui.exe ]; then cp target/release/mviewer-gui.exe dist/mviewer/mviewer-gui.exe; fi
+          mkdir -p dist/mviewer/icons
+          cp target/generated-icons/mviewer-256.png dist/mviewer/icons/mviewer.png
+
+      - name: Add Linux desktop launcher
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p dist/mviewer/share/applications
+          cp packaging/linux/mviewer-gui.desktop dist/mviewer/share/applications/mviewer-gui.desktop
+
+      - name: Build macOS app bundle
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          APP_DIR="dist/mviewer/mviewer-gui.app"
+          mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
+          cp target/release/mviewer-gui "$APP_DIR/Contents/MacOS/mviewer-gui"
+          chmod +x "$APP_DIR/Contents/MacOS/mviewer-gui"
+          cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDevelopmentRegion</key>
+            <string>English</string>
+            <key>CFBundleExecutable</key>
+            <string>mviewer-gui</string>
+            <key>CFBundleIconFile</key>
+            <string>AppIcon</string>
+            <key>CFBundleIdentifier</key>
+            <string>io.github.majimboo.mviewer</string>
+            <key>CFBundleInfoDictionaryVersion</key>
+            <string>6.0</string>
+            <key>CFBundleName</key>
+            <string>mviewer GUI</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>${{ github.ref_name }}</string>
+            <key>CFBundleVersion</key>
+            <string>${{ github.run_number }}</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>12.0</string>
+          </dict>
+          </plist>
+          mkdir -p icon.iconset
+          for size in 16 32 64 128 256 512; do
+            cp "target/generated-icons/mviewer-${size}.png" "icon.iconset/icon_${size}x${size}.png"
+            cp "target/generated-icons/mviewer-$((size * 2)).png" "icon.iconset/icon_${size}x${size}@2x.png"
+          done
+          iconutil -c icns icon.iconset -o "$APP_DIR/Contents/Resources/AppIcon.icns"
+          rm -rf icon.iconset
 
       - name: Archive release bundle (tar.gz)
         if: runner.os != 'Windows'

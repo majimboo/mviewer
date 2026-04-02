@@ -1,18 +1,8 @@
-mod animation;
-mod archive;
-mod gltf;
-mod mesh;
-mod scene;
-mod viewer;
-
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
-
-use crate::animation::ParsedAnimationSet;
-use crate::archive::Archive;
-use crate::scene::Scene;
+use mviewer::{ExportOptions, default_output_dir, export_project, load_project};
 
 #[derive(Debug, Parser)]
 #[command(name = "mviewer")]
@@ -29,23 +19,10 @@ fn main() -> Result<()> {
     let output_dir = cli
         .output_dir
         .unwrap_or_else(|| default_output_dir(&cli.input));
+    let project = load_project(&cli.input)?;
+    let report = export_project(&project, &output_dir, &ExportOptions::include_all(&project.scene))?;
 
-    let archive = Archive::from_path(&cli.input)?;
-    let scene_entry = archive
-        .get("scene.json")
-        .context("scene.json not found in archive")?;
-    let scene = Scene::from_bytes(&scene_entry.data)?;
-    let animations = ParsedAnimationSet::from_scene(&archive, &scene)?;
-
-    gltf::export_scene(&archive, &scene, &cli.input, &output_dir)?;
-    let scene_name = cli
-        .input
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("scene");
-    viewer::write_viewer(&output_dir, &format!("{scene_name}.gltf"), "mviewer.runtime.json")?;
-
-    if let Some(animations) = animations {
+    if let Some(animations) = &project.animations {
         println!(
             "parsed animation data: {} matrices, {} skinning rigs, {} animations",
             animations.num_matrices,
@@ -53,17 +30,11 @@ fn main() -> Result<()> {
             animations.animations.len()
         );
     }
-    println!("wrote glTF scene to {}", output_dir.display());
+    println!(
+        "wrote glTF scene to {} ({} of {} meshes)",
+        report.output_dir.display(),
+        report.exported_meshes,
+        report.total_meshes
+    );
     Ok(())
-}
-
-fn default_output_dir(input: &std::path::Path) -> PathBuf {
-    let stem = input
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("scene");
-    input
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .join(format!("{stem}_gltf"))
 }

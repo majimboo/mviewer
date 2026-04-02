@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Scene {
     #[serde(rename = "metaData")]
     pub meta_data: Option<MetaData>,
@@ -22,7 +22,7 @@ pub struct Scene {
     pub anim_data: Option<AnimData>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct MetaData {
     #[serde(rename = "tbVersion")]
     pub tb_version: Option<u32>,
@@ -47,8 +47,27 @@ pub struct ViewDesc {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct PostDesc {
+    pub sharpen: Option<f32>,
+    #[serde(rename = "sharpenLimit")]
+    pub sharpen_limit: Option<f32>,
     #[serde(rename = "bloomColor")]
     pub bloom_color: Option<[f32; 4]>,
+    #[serde(rename = "bloomSize")]
+    pub bloom_size: Option<f32>,
+    pub vignette: Option<[f32; 4]>,
+    #[serde(rename = "vignetteCurve")]
+    pub vignette_curve: Option<f32>,
+    pub saturation: Option<[f32; 4]>,
+    pub contrast: Option<[f32; 4]>,
+    pub brightness: Option<[f32; 4]>,
+    pub bias: Option<[f32; 4]>,
+    pub grain: Option<f32>,
+    #[serde(rename = "grainSharpness")]
+    pub grain_sharpness: Option<f32>,
+    #[serde(rename = "toneMap")]
+    pub tone_map: Option<u32>,
+    #[serde(rename = "colorLUT")]
+    pub color_lut: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -56,6 +75,8 @@ pub struct Lights {
     pub count: Option<usize>,
     #[serde(rename = "shadowCount")]
     pub shadow_count: Option<usize>,
+    #[serde(rename = "useNewAttenuation")]
+    pub use_new_attenuation: Option<bool>,
     pub rotation: Option<f32>,
     pub positions: Option<Vec<f32>>,
     pub directions: Option<Vec<f32>>,
@@ -120,6 +141,10 @@ pub struct MaterialDesc {
     pub alpha_test: Option<f32>,
     #[serde(rename = "useSkin")]
     pub use_skin: Option<bool>,
+    #[serde(rename = "ggxSpecular")]
+    pub ggx_specular: Option<bool>,
+    #[serde(rename = "unlitDiffuse")]
+    pub unlit_diffuse: Option<bool>,
     pub fresnel: Option<[f32; 3]>,
     #[serde(rename = "horizonOcclude")]
     pub horizon_occlude: Option<f32>,
@@ -130,6 +155,30 @@ pub struct MaterialDesc {
     pub refraction: Option<bool>,
     #[serde(rename = "emissiveIntensity")]
     pub emissive_intensity: Option<f32>,
+    #[serde(rename = "emissiveSecondaryUV")]
+    pub emissive_secondary_uv: Option<bool>,
+    #[serde(rename = "aoSecondaryUV")]
+    pub ao_secondary_uv: Option<bool>,
+    #[serde(rename = "vertexColor")]
+    pub vertex_color: Option<bool>,
+    #[serde(rename = "vertexColorsRGB")]
+    pub vertex_colors_rgb: Option<bool>,
+    #[serde(rename = "vertexColorAlpha")]
+    pub vertex_color_alpha: Option<bool>,
+    #[serde(rename = "tangentOrthogonalize")]
+    pub tangent_orthogonalize: Option<bool>,
+    #[serde(rename = "tangentNormalize")]
+    pub tangent_normalize: Option<bool>,
+    #[serde(rename = "tangentGenerateBitangent")]
+    pub tangent_generate_bitangent: Option<bool>,
+    #[serde(rename = "extrasTexCoordRanges")]
+    pub extras_tex_coord_ranges: Option<HashMap<String, TexCoordRangeDesc>>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct TexCoordRangeDesc {
+    #[serde(rename = "scaleBias")]
+    pub scale_bias: [f32; 4],
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

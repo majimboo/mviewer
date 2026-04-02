@@ -5,10 +5,12 @@ use byteorder::{LittleEndian, ReadBytesExt};
 
 use crate::scene::MeshDesc;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DecodedMesh {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
+    pub tangents: Vec<[f32; 3]>,
+    pub bitangents: Vec<[f32; 3]>,
     pub texcoords: Vec<[f32; 2]>,
     pub colors: Option<Vec<[f32; 4]>>,
     pub indices: Vec<u32>,
@@ -38,6 +40,8 @@ pub fn decode_mesh(bytes: &[u8], mesh: &MeshDesc) -> Result<DecodedMesh> {
 
     let mut positions = Vec::with_capacity(mesh.vertex_count);
     let mut normals = Vec::with_capacity(mesh.vertex_count);
+    let mut tangents = Vec::with_capacity(mesh.vertex_count);
+    let mut bitangents = Vec::with_capacity(mesh.vertex_count);
     let mut texcoords = Vec::with_capacity(mesh.vertex_count);
     let mut colors = if has_vertex_color {
         Some(Vec::with_capacity(mesh.vertex_count))
@@ -62,14 +66,14 @@ pub fn decode_mesh(bytes: &[u8], mesh: &MeshDesc) -> Result<DecodedMesh> {
             cursor.read_exact(&mut skip)?;
         }
 
-        let _tangent = unpack_unit_vector(
+        tangents.push(unpack_unit_vector(
             cursor.read_u16::<LittleEndian>()?,
             cursor.read_u16::<LittleEndian>()?,
-        );
-        let _bitangent = unpack_unit_vector(
+        ));
+        bitangents.push(unpack_unit_vector(
             cursor.read_u16::<LittleEndian>()?,
             cursor.read_u16::<LittleEndian>()?,
-        );
+        ));
         normals.push(unpack_unit_vector(
             cursor.read_u16::<LittleEndian>()?,
             cursor.read_u16::<LittleEndian>()?,
@@ -87,6 +91,8 @@ pub fn decode_mesh(bytes: &[u8], mesh: &MeshDesc) -> Result<DecodedMesh> {
     Ok(DecodedMesh {
         positions,
         normals,
+        tangents,
+        bitangents,
         texcoords,
         colors,
         indices: all_indices,

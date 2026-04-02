@@ -2,6 +2,8 @@
 
 Rust-native exporter for Marmoset `.mview` scenes.
 
+Author: Majid Siddiqui (<me@majidarif.com>)
+
 ![vivfox export preview](docs/images/vivfox-exporter-screenshot.png)
 
 ## Download
@@ -26,6 +28,12 @@ After extracting a release archive, run:
 
 ```text
 mviewer --help
+```
+
+Desktop GUI:
+
+```text
+mviewer-gui
 ```
 
 ## Feature Parity
@@ -55,6 +63,7 @@ mviewer --help
 ### Project Features
 
 - [x] Rust-native command-line tool
+- [x] Native desktop GUI for file loading, scene inspection, mesh selection, and export
 - [x] Windows, Linux, and macOS builds
 - [x] GitHub Actions CI and release packaging
 - [x] GitHub Pages project site
@@ -81,6 +90,22 @@ This writes:
 - copied texture files used by the scene
 - merged `*_rgba.png` textures when the source scene uses a separate alpha map
 - `mviewer_raw/` with all source archive entries
+
+## GUI Workflow
+
+Launch the desktop app with:
+
+```text
+mviewer-gui
+```
+
+The current GUI supports:
+
+- opening a `.mview` file
+- viewing scene metadata and counts
+- inspecting meshes, materials, and animations
+- choosing which meshes to export
+- exporting the selected subset to glTF
 
 ## Output Formats
 

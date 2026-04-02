@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=mviewer GUI
+Comment=Inspect and export Marmoset .mview scenes
+Exec=mviewer-gui
+Icon=mviewer
+Terminal=false
+Categories=Graphics;3DGraphics;Utility;

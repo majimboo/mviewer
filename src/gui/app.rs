@@ -1,557 +1,795 @@
-use std::collections::BTreeSet;
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::net::TcpListener;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::thread;
 
-use eframe::{CreationContext, egui};
-use image::imageops::FilterType;
+use anyhow::{Context, Result};
+use base64::Engine as _;
+use directories::ProjectDirs;
 use rfd::FileDialog;
+use serde::{Deserialize, Serialize};
+use tao::{
+    dpi::LogicalSize,
+    event::{Event, WindowEvent},
+    event_loop::{ControlFlow, EventLoopBuilder},
+    window::WindowBuilder,
+};
+use tiny_http::{Header, Method, Response, Server, StatusCode};
+use wry::{WebContext, WebViewBuilder};
 
 use crate::{
     ExportOptions, ProjectDocument, TextureExportFormat, default_output_dir, export_project,
     export_texture_asset, load_project,
 };
-use crate::gui::viewer::RuntimeViewer;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum NavTab {
-    #[default]
-    Scene,
-    Materials,
-    Animations,
-    Export,
-}
+use super::icon::load_app_icon;
 
-pub struct MviewerGuiApp {
+const APP_HTML: &str = r#"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>mviewer</title>
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <div class="toolbar">
+    <div class="toolbar-row">
+      <div class="title">mviewer</div>
+      <div class="path" id="inputPath">Open a .mview file</div>
+      <button onclick="post({cmd:'openProject'})">Open .mview</button>
+      <button onclick="post({cmd:'chooseOutputDir'})">Choose Output Folder</button>
+      <button class="primary" id="exportButton" onclick="post({cmd:'exportScene'})" disabled>Export Scene</button>
+      <select id="textureFormat" onchange="post({cmd:'setTextureFormat', format: this.value})">
+        <option value="png">PNG</option>
+        <option value="tga">TGA</option>
+      </select>
+    </div>
+  </div>
+  <main>
+    <aside>
+      <div class="card">
+        <h3>Project</h3>
+        <div class="summary-list" id="summary">
+          <div class="empty">No scene loaded.</div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Output</h3>
+        <div class="simple-list">
+          <div id="outputDir">No output folder selected.</div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Recent Files</h3>
+        <div class="simple-list" id="recentFiles">
+          <div class="empty">No recent files yet.</div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Notes</h3>
+        <div class="simple-list">
+          <div>Rust stays responsible for export and filesystem work.</div>
+          <div>The preview pane is now designed around embedded web content for exact Marmoset runtime parity.</div>
+        </div>
+      </div>
+    </aside>
+    <section class="content">
+      <div class="preview">
+        <div class="preview-inner">
+          <div>
+            <div id="previewHost"></div>
+            <div class="preview-copy" id="previewText">
+              <div>
+                <div class="preview-title">Embedded Preview Shell</div>
+                <div class="preview-body">
+                  Open a scene to load the embedded Marmoset runtime preview.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="panels">
+        <div class="card">
+          <h2>Materials</h2>
+          <div id="materials" class="materials">
+            <div class="empty">Open a scene to inspect materials and textures.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <div class="status" id="status">Ready.</div>
+  <script src="/marmoset.js"></script>
+  <script src="/marmoset-fork.js"></script>
+  <script>
+    let runtimeViewer = null;
+    let runtimeViewerSceneUrl = null;
+
+    function post(message) {
+      window.ipc.postMessage(JSON.stringify(message));
+    }
+
+    function textureFormat() {
+      return document.getElementById('textureFormat').value;
+    }
+
+    function setStatus(message) {
+      document.getElementById('status').textContent = message || 'Ready.';
+    }
+
+    function exportTexture(name) {
+      post({ cmd: 'exportTexture', texture_name: name, format: textureFormat() });
+    }
+
+    function openRecent(path) {
+      post({ cmd: 'openRecentProject', path });
+    }
+
+    function encodeTextureName(name) {
+      const utf8 = new TextEncoder().encode(name);
+      let binary = '';
+      for (const byte of utf8) binary += String.fromCharCode(byte);
+      return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+    }
+
+    function textureUrl(name) {
+      return `/texture/${encodeTextureName(name)}`;
+    }
+
+    function materialTextures(desc) {
+      const slots = [
+        ['albedo', desc.albedoTex],
+        ['alpha', desc.alphaTex],
+        ['normal', desc.normalTex],
+        ['reflectivity', desc.reflectivityTex],
+        ['gloss', desc.glossTex],
+        ['extras', desc.extrasTex],
+        ['extrasA', desc.extrasTexA],
+        ['occlusion', desc.occlusionTex],
+        ['emissive', desc.emissiveTex],
+      ];
+      return slots
+        .filter(([, name]) => typeof name === 'string' && name.length)
+        .map(([slot, name]) => ({ slot, name }));
+    }
+
+    function renderEmptySceneState() {
+      document.getElementById('summary').innerHTML = '<div class="empty">No scene loaded.</div>';
+      document.getElementById('materials').innerHTML = '<div class="empty">Open a scene to inspect materials and textures.</div>';
+    }
+
+    function renderRecentFiles(files) {
+      const root = document.getElementById('recentFiles');
+      if (!files || !files.length) {
+        root.innerHTML = '<div class="empty">No recent files yet.</div>';
+        return;
+      }
+      root.innerHTML = files.map(file => `
+        <button class="recent-file" title="${escapeHtml(file)}" onclick="openRecent(${JSON.stringify(file)})">
+          ${escapeHtml(file)}
+        </button>
+      `).join('');
+    }
+
+    function renderSceneState(scene) {
+      const summary = document.getElementById('summary');
+      const meta = scene.metaData || {};
+      const animations = scene.sceneAnimator?.animations || [];
+      const cameras = scene.cameras?.count ?? scene.cameras?.length ?? 0;
+      const lights = scene.lights?.count ?? scene.lights?.length ?? 0;
+      const meshes = scene.meshes?.length ?? 0;
+      const materialsList = Array.isArray(scene.materialsList) ? scene.materialsList : [];
+
+      summary.innerHTML = `
+        <div>Title: ${escapeHtml(meta.title || '(untitled)')}</div>
+        <div>Author: ${escapeHtml(meta.author || '(unknown)')}</div>
+        <div>Meshes: ${meshes}</div>
+        <div>Materials: ${materialsList.length}</div>
+        <div>Cameras: ${cameras}</div>
+        <div>Lights: ${lights}</div>
+        <div>Animations: ${animations.length}</div>
+      `;
+
+      const materials = document.getElementById('materials');
+      if (!materialsList.length) {
+        materials.innerHTML = '<div class="empty">No materials detected in the loaded scene.</div>';
+        return;
+      }
+
+      materials.innerHTML = materialsList.map((material, index) => {
+        const desc = material?.desc || {};
+        const name = desc.name || `Material ${index + 1}`;
+        const textures = materialTextures(desc);
+        return `
+          <div class="material-card">
+            <div class="material-header">
+              <div class="material-name">${escapeHtml(name)}</div>
+              <div class="texture-name">${textures.length} texture${textures.length === 1 ? '' : 's'}</div>
+            </div>
+            <div class="texture-strip">
+              ${textures.length ? textures.map(texture => `
+                <div class="texture-card">
+                  <div class="texture-preview">
+                    <img src="${textureUrl(texture.name)}" alt="${escapeHtml(texture.name)}" />
+                  </div>
+                  <div class="texture-slot">${escapeHtml(texture.slot)}</div>
+                  <div class="texture-name">${escapeHtml(texture.name)}</div>
+                  <button onclick="exportTexture(${JSON.stringify(texture.name)})">Export</button>
+                </div>
+              `).join('') : '<div class="empty">No bound textures</div>'}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function watchSceneState() {
+      const scene = runtimeViewer?.scene;
+      if (!scene || !scene.sceneLoaded) {
+        return;
+      }
+      renderSceneState(scene);
+    }
+
+    window.__mviewerReceive = function(state) {
+      document.getElementById('inputPath').textContent = state.input_path || 'Open a .mview file';
+      document.getElementById('outputDir').textContent = state.output_dir || 'No output folder selected.';
+      document.getElementById('status').textContent = state.status || 'Ready.';
+      document.getElementById('exportButton').disabled = !state.loaded;
+      document.getElementById('textureFormat').value = state.texture_format || 'png';
+      renderRecentFiles(state.recent_files || []);
+
+      const previewText = document.getElementById('previewText');
+      if (state.loaded && state.scene_url) {
+        previewText.classList.add('hidden');
+        ensurePreview(state.scene_url);
+      } else {
+        previewText.classList.remove('hidden');
+        runtimeViewerSceneUrl = null;
+        runtimeViewer = null;
+        renderEmptySceneState();
+      }
+    };
+
+    function ensurePreview(sceneUrl) {
+      const host = document.getElementById('previewHost');
+      if (!window.marmoset || !host) {
+        setStatus('Embedded Marmoset runtime not available.');
+        return;
+      }
+      if (runtimeViewer && runtimeViewerSceneUrl === sceneUrl) {
+        resizePreview();
+        return;
+      }
+      host.innerHTML = '';
+      const width = Math.max(320, host.clientWidth || 960);
+      const height = Math.max(180, host.clientHeight || 540);
+      try {
+        runtimeViewer = new marmoset.WebViewer(width, height, sceneUrl, false);
+      } catch (error) {
+        console.error('Failed to create WebViewer', error);
+        setStatus(`Preview init failed: ${error?.message || error}`);
+        return;
+      }
+      runtimeViewerSceneUrl = sceneUrl;
+      runtimeViewer.domRoot.style.width = '100%';
+      runtimeViewer.domRoot.style.height = '100%';
+      host.appendChild(runtimeViewer.domRoot);
+      runtimeViewer.onLoad = () => {
+        setStatus('Preview loaded.');
+        watchSceneState();
+      };
+      try {
+        runtimeViewer.loadScene(sceneUrl);
+        setStatus('Loading embedded preview...');
+      } catch (error) {
+        console.error('Failed to load preview scene', error);
+        setStatus(`Preview load failed: ${error?.message || error}`);
+      }
+      resizePreview();
+      renderEmptySceneState();
+    }
+
+    function resizePreview() {
+      const host = document.getElementById('previewHost');
+      if (!runtimeViewer || !host) {
+        return;
+      }
+      const width = Math.max(320, host.clientWidth || 960);
+      const height = Math.max(180, host.clientHeight || 540);
+      runtimeViewer.resize(width, height);
+    }
+
+    window.addEventListener('resize', resizePreview);
+    window.setInterval(watchSceneState, 250);
+    window.addEventListener('error', event => {
+      console.error(event.error || event.message);
+      setStatus(`UI error: ${event.message}`);
+    });
+    window.addEventListener('unhandledrejection', event => {
+      console.error(event.reason);
+      setStatus(`UI error: ${event.reason?.message || event.reason}`);
+    });
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('\"', '&quot;');
+    }
+
+    post({ cmd: 'ready' });
+    renderEmptySceneState();
+  </script>
+</body>
+</html>
+"#;
+
+#[derive(Debug)]
+struct AppState {
     project: Option<ProjectDocument>,
-    runtime_viewer: RuntimeViewer,
-    mesh_export_selection: Vec<bool>,
-    mesh_preview_visibility: Vec<bool>,
-    include_cameras: bool,
-    include_lights: bool,
-    include_animations: bool,
     output_dir: String,
     status: String,
-    active_tab: NavTab,
-    selected_mesh_index: Option<usize>,
-    selected_material_index: Option<usize>,
-    selected_animation_index: Option<usize>,
-    animation_time: f32,
-    animation_playing: bool,
-    texture_export_format: TextureExportFormat,
-    texture_preview_cache: HashMap<String, egui::TextureHandle>,
+    base_url: String,
+    settings: AppSettings,
+    settings_path: PathBuf,
 }
 
-impl Default for MviewerGuiApp {
-    fn default() -> Self {
-        Self {
-            project: None,
-            runtime_viewer: RuntimeViewer::new(None),
-            mesh_export_selection: Vec::new(),
-            mesh_preview_visibility: Vec::new(),
-            include_cameras: true,
-            include_lights: true,
-            include_animations: true,
-            output_dir: String::new(),
-            status: String::new(),
-            active_tab: NavTab::Scene,
-            selected_mesh_index: None,
-            selected_material_index: None,
-            selected_animation_index: None,
-            animation_time: 0.0,
-            animation_playing: false,
-            texture_export_format: TextureExportFormat::Png,
-            texture_preview_cache: HashMap::new(),
-        }
-    }
+#[derive(Debug, Default)]
+struct ProtocolState {
+    current_scene_path: Option<PathBuf>,
 }
 
-impl MviewerGuiApp {
-    pub fn new(cc: &CreationContext<'_>) -> Self {
-        Self {
-            runtime_viewer: RuntimeViewer::new(cc.wgpu_render_state.clone()),
-            ..Default::default()
-        }
-    }
-
-    pub fn open_project(&mut self, path: PathBuf) {
-        match load_project(&path) {
-            Ok(project) => {
-                self.output_dir = default_output_dir(&path).display().to_string();
-                self.mesh_export_selection = vec![true; project.runtime.meshes.len()];
-                self.mesh_preview_visibility = vec![true; project.runtime.meshes.len()];
-                self.include_cameras = true;
-                self.include_lights = true;
-                self.include_animations = true;
-                self.selected_mesh_index = (!project.runtime.meshes.is_empty()).then_some(0);
-                self.selected_material_index = (!project.runtime.materials.is_empty()).then_some(0);
-                self.selected_animation_index = project
-                    .animations
-                    .as_ref()
-                    .and_then(|animations| (!animations.animations.is_empty()).then_some(0));
-                self.animation_time = 0.0;
-                self.animation_playing = project
-                    .scene
-                    .anim_data
-                    .as_ref()
-                    .and_then(|anim| anim.auto_play_anims)
-                    .unwrap_or(false);
-                self.texture_preview_cache.clear();
-                self.status = format!("Loaded {}", path.display());
-                self.project = Some(project);
-                self.active_tab = NavTab::Scene;
-            }
-            Err(err) => {
-                self.status = format!("Load failed: {err:#}");
-            }
-        }
-    }
-
-    pub fn export_selected(&mut self) {
-        let Some(project) = &self.project else {
-            self.status = "Load a .mview file first.".to_string();
-            return;
-        };
-
-        let included_meshes: BTreeSet<_> = self
-            .mesh_export_selection
-            .iter()
-            .enumerate()
-            .filter_map(|(index, selected)| selected.then_some(index))
-            .collect();
-        if included_meshes.is_empty() {
-            self.status = "Select at least one mesh to export.".to_string();
-            return;
-        }
-
-        let output_dir = PathBuf::from(self.output_dir.trim());
-        match export_project(
-            project,
-            &output_dir,
-            &ExportOptions {
-                included_meshes,
-                include_cameras: self.include_cameras,
-                include_lights: self.include_lights,
-                include_animations: self.include_animations,
-            },
-        ) {
-            Ok(report) => {
-                self.status = format!(
-                    "Exported {} of {} meshes to {}",
-                    report.exported_meshes,
-                    report.total_meshes,
-                    report.output_dir.display()
-                );
-            }
-            Err(err) => {
-                self.status = format!("Export failed: {err:#}");
-            }
-        }
-    }
-
-    fn export_texture(&mut self, texture_name: &str) {
-        let Some(project) = &self.project else {
-            self.status = "Load a .mview file first.".to_string();
-            return;
-        };
-        let output_dir = PathBuf::from(self.output_dir.trim()).join("textures");
-        match export_texture_asset(project, texture_name, &output_dir, self.texture_export_format) {
-            Ok(path) => {
-                self.status = format!("Exported texture to {}", path.display());
-            }
-            Err(err) => {
-                self.status = format!("Texture export failed: {err:#}");
-            }
-        }
-    }
-
-    fn handle_dropped_files(&mut self, ctx: &egui::Context) {
-        let dropped_files = ctx.input(|input| input.raw.dropped_files.clone());
-        for file in dropped_files {
-            if let Some(path) = file.path {
-                if path
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    .map(|ext| ext.eq_ignore_ascii_case("mview"))
-                    .unwrap_or(false)
-                {
-                    self.open_project(path);
-                    break;
-                }
-            }
-        }
-    }
-
-    fn selected_mesh_count(&self) -> usize {
-        self.mesh_export_selection.iter().filter(|selected| **selected).count()
-    }
-
-    fn visible_mesh_count(&self) -> usize {
-        self.mesh_preview_visibility
-            .iter()
-            .filter(|selected| **selected)
-            .count()
-    }
-
-    fn draw_toolbar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.heading("mviewer");
-            ui.separator();
-            if let Some(project) = &self.project {
-                ui.label(project.input_path.display().to_string());
-            } else {
-                ui.label("Open or drop a .mview file");
-            }
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let export_enabled = self.project.is_some();
-                if ui
-                    .add_enabled(export_enabled, egui::Button::new("Export Selected"))
-                    .clicked()
-                {
-                    self.export_selected();
-                }
-                if ui.button("Choose Output Folder").clicked() {
-                    if let Some(path) = FileDialog::new().pick_folder() {
-                        self.output_dir = path.display().to_string();
-                    }
-                }
-                if ui.button("Open .mview").clicked() {
-                    if let Some(path) = FileDialog::new()
-                        .add_filter("Marmoset Viewer scene", &["mview"])
-                        .pick_file()
-                    {
-                        self.open_project(path);
-                    }
-                }
-            });
-        });
-    }
-
-    fn draw_sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Project");
-        if let Some(project) = &self.project {
-            if let Some(title) = &project.summary.title {
-                ui.label(title);
-            }
-            if let Some(author) = &project.summary.author {
-                ui.small(format!("by {author}"));
-            }
-            ui.small(format!("Visible in viewer: {}", self.visible_mesh_count()));
-            ui.small(format!("Selected for export: {}", self.selected_mesh_count()));
-        } else {
-            ui.label("No scene loaded");
-        }
-
-        ui.separator();
-        ui.label("Navigate");
-        for (tab, label) in [
-            (NavTab::Scene, "Scene"),
-            (NavTab::Materials, "Materials"),
-            (NavTab::Animations, "Animations"),
-            (NavTab::Export, "Export"),
-        ] {
-            ui.selectable_value(&mut self.active_tab, tab, label);
-        }
-
-        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-            ui.separator();
-            ui.small("Majid Siddiqui");
-            ui.hyperlink_to("me@majidarif.com", "mailto:me@majidarif.com");
-        });
-    }
-
-    fn draw_runtime_panel(&mut self, ui: &mut egui::Ui, project: &ProjectDocument) {
-        self.runtime_viewer.draw(
-            ui,
-            project,
-            &self.mesh_preview_visibility,
-            self.selected_animation_index,
-            self.animation_time,
-        );
-    }
-
-    fn draw_scene_tab(&mut self, ui: &mut egui::Ui, project: &ProjectDocument) {
-        ui.heading("Scene");
-        ui.label("Preview visibility and export selection are separated.");
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            if ui.button("Show All In Viewer").clicked() {
-                self.mesh_preview_visibility.fill(true);
-            }
-            if ui.button("Hide All In Viewer").clicked() {
-                self.mesh_preview_visibility.fill(false);
-            }
-            if ui.button("Select All For Export").clicked() {
-                self.mesh_export_selection.fill(true);
-            }
-            if ui.button("Select None For Export").clicked() {
-                self.mesh_export_selection.fill(false);
-            }
-        });
-        ui.add_space(8.0);
-
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for (index, mesh) in project.runtime.meshes.iter().enumerate() {
-                ui.horizontal(|ui| {
-                    if let Some(visible) = self.mesh_preview_visibility.get_mut(index) {
-                        ui.checkbox(visible, "");
-                    }
-                    if let Some(selected) = self.mesh_export_selection.get_mut(index) {
-                        ui.checkbox(selected, "");
-                    }
-                    if ui
-                        .selectable_label(self.selected_mesh_index == Some(index), &mesh.desc.name)
-                        .clicked()
-                    {
-                        self.selected_mesh_index = Some(index);
-                    }
-                    ui.small(format!("v:{} i:{}", mesh.desc.vertex_count, mesh.desc.index_count));
-                });
-            }
-        });
-    }
-
-    fn draw_materials_tab(&mut self, ui: &mut egui::Ui, project: &ProjectDocument) {
-        ui.heading("Materials");
-        texture_export_format_picker(ui, &mut self.texture_export_format);
-        ui.add_space(8.0);
-        ui.columns(2, |columns| {
-            columns[0].group(|ui| {
-                for (index, material) in project.runtime.materials.iter().enumerate() {
-                    if ui
-                        .selectable_label(self.selected_material_index == Some(index), &material.desc.name)
-                        .clicked()
-                    {
-                        self.selected_material_index = Some(index);
-                    }
-                }
-            });
-            columns[1].group(|ui| {
-                if let Some(index) = self.selected_material_index {
-                    if let Some(material) = project.runtime.materials.get(index) {
-                        ui.heading(&material.desc.name);
-                        ui.colored_label(
-                            egui::Color32::from_rgb(
-                                (material.preview_color[0] * 255.0) as u8,
-                                (material.preview_color[1] * 255.0) as u8,
-                                (material.preview_color[2] * 255.0) as u8,
-                            ),
-                            "Preview color",
-                        );
-                        ui.add_space(6.0);
-                        self.draw_texture_list(ui, project, &material.textures);
-                    }
-                } else {
-                    ui.label("Select a material.");
-                }
-            });
-        });
-    }
-
-    fn draw_animations_tab(&mut self, ui: &mut egui::Ui, project: &ProjectDocument) {
-        ui.heading("Animations");
-        let Some(animations) = &project.animations else {
-            ui.label("No animation data found.");
-            return;
-        };
-
-        ui.columns(2, |columns| {
-            columns[0].group(|ui| {
-                for (index, clip) in animations.animations.iter().enumerate() {
-                    if ui
-                        .selectable_label(self.selected_animation_index == Some(index), &clip.desc.name)
-                        .clicked()
-                    {
-                        self.selected_animation_index = Some(index);
-                        self.animation_time = 0.0;
-                    }
-                }
-            });
-            columns[1].group(|ui| {
-                if let Some(index) = self.selected_animation_index {
-                    if let Some(clip) = animations.animations.get(index) {
-                        ui.heading(&clip.desc.name);
-                        ui.label(format!("Length: {:.2}s", clip.desc.length));
-                        ui.label(format!("Frames: {}", clip.desc.total_frames));
-                        ui.label(format!("Animated objects: {}", clip.animated_objects.len()));
-                        ui.add_space(8.0);
-                        ui.horizontal(|ui| {
-                            if ui
-                                .button(if self.animation_playing { "Pause" } else { "Play" })
-                                .clicked()
-                            {
-                                self.animation_playing = !self.animation_playing;
-                            }
-                            if ui.button("Reset").clicked() {
-                                self.animation_time = 0.0;
-                            }
-                        });
-                        if clip.desc.length > f32::EPSILON {
-                            ui.add(
-                                egui::Slider::new(&mut self.animation_time, 0.0..=clip.desc.length)
-                                    .text("Time"),
-                            );
-                        }
-                    }
-                } else {
-                    ui.label("Select an animation clip.");
-                }
-            });
-        });
-    }
-
-    fn draw_export_tab(&mut self, ui: &mut egui::Ui, project: &ProjectDocument) {
-        ui.heading("Export");
-        ui.group(|ui| {
-            ui.label("Output directory");
-            ui.text_edit_singleline(&mut self.output_dir);
-        });
-        ui.add_space(8.0);
-        ui.group(|ui| {
-            ui.heading("Included content");
-            ui.checkbox(&mut self.include_cameras, "Include cameras");
-            ui.checkbox(&mut self.include_lights, "Include lights");
-            ui.checkbox(&mut self.include_animations, "Include animations");
-            ui.label(format!(
-                "Selected meshes: {} / {}",
-                self.selected_mesh_count(),
-                project.runtime.meshes.len()
-            ));
-        });
-        ui.add_space(12.0);
-        if ui.button("Export Selected Scene").clicked() {
-            self.export_selected();
-        }
-    }
-
-    fn draw_texture_list(
-        &mut self,
-        ui: &mut egui::Ui,
-        project: &ProjectDocument,
-        textures: &[crate::runtime::RuntimeTextureRef],
-    ) {
-        egui::ScrollArea::horizontal()
-            .id_salt("texture_preview_list")
-            .max_width(ui.available_width())
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    for texture in textures {
-                        ui.group(|ui| {
-                            ui.set_min_width(180.0);
-                            if let Some(handle) =
-                                self.ensure_texture_preview(ui.ctx(), project, &texture.name)
-                            {
-                                let image =
-                                    egui::Image::new(&handle).fit_to_exact_size(egui::vec2(72.0, 72.0));
-                                ui.add(image);
-                            } else {
-                                ui.allocate_ui(egui::vec2(72.0, 72.0), |ui| {
-                                    ui.centered_and_justified(|ui| ui.small("No preview"));
-                                });
-                            }
-                            ui.label(format!("{}:", texture.slot));
-                            ui.small(&texture.name);
-                            if ui.button("Export").clicked() {
-                                self.export_texture(&texture.name);
-                            }
-                        });
-                    }
-                });
-            });
-    }
-
-    fn ensure_texture_preview(
-        &mut self,
-        ctx: &egui::Context,
-        project: &ProjectDocument,
-        texture_name: &str,
-    ) -> Option<egui::TextureHandle> {
-        let key = format!("{}:{}", project.input_path.display(), texture_name);
-        if let Some(existing) = self.texture_preview_cache.get(&key) {
-            return Some(existing.clone());
-        }
-        let entry = project.archive.get(texture_name)?;
-        let image = image::load_from_memory(&entry.data).ok()?;
-        let preview = image.resize(128, 128, FilterType::Triangle).to_rgba8();
-        let size = [preview.width() as usize, preview.height() as usize];
-        let color_image = egui::ColorImage::from_rgba_unmultiplied(size, preview.as_raw());
-        let handle = ctx.load_texture(
-            key.clone(),
-            color_image,
-            egui::TextureOptions::LINEAR,
-        );
-        self.texture_preview_cache.insert(key, handle.clone());
-        Some(handle)
-    }
+#[derive(Debug, Deserialize)]
+#[serde(tag = "cmd", rename_all = "camelCase")]
+enum FrontendCommand {
+    Ready,
+    OpenProject,
+    OpenRecentProject {
+        path: String,
+    },
+    ChooseOutputDir,
+    SetTextureFormat {
+        format: String,
+    },
+    ExportScene,
+    ExportTexture {
+        texture_name: String,
+        format: String,
+    },
 }
 
-fn texture_export_format_picker(ui: &mut egui::Ui, format: &mut TextureExportFormat) {
-    ui.horizontal(|ui| {
-        ui.label("Texture export:");
-        ui.selectable_value(format, TextureExportFormat::Png, "PNG");
-        ui.selectable_value(format, TextureExportFormat::Tga, "TGA");
+#[derive(Debug)]
+enum UserEvent {
+    Frontend(FrontendCommand),
+}
+
+#[derive(Debug, Serialize)]
+struct AppViewState {
+    loaded: bool,
+    input_path: Option<String>,
+    scene_url: Option<String>,
+    output_dir: String,
+    status: String,
+    texture_format: String,
+    recent_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct AppSettings {
+    recent_files: Vec<String>,
+    last_opened_file: Option<String>,
+    last_output_dir: Option<String>,
+    texture_format: String,
+}
+
+#[derive(Debug, Clone)]
+struct AppPaths {
+    settings_path: PathBuf,
+    webview_data_dir: PathBuf,
+}
+
+pub fn run() -> Result<()> {
+    let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
+    let proxy = event_loop.create_proxy();
+    let protocol_state = Arc::new(Mutex::new(ProtocolState::default()));
+    let app_paths = app_paths()?;
+    let base_url = start_http_server(protocol_state.clone())?;
+    let mut web_context = WebContext::new(Some(app_paths.webview_data_dir.clone()));
+    let window = WindowBuilder::new()
+        .with_title("mviewer")
+        .with_inner_size(LogicalSize::new(1400.0, 900.0))
+        .with_window_icon(Some(load_app_icon()?))
+        .build(&event_loop)
+        .context("failed to create application window")?;
+
+    let ipc_proxy = proxy.clone();
+    let webview = WebViewBuilder::new_with_web_context(&mut web_context)
+        .with_ipc_handler(move |request| {
+            if let Ok(command) = serde_json::from_str::<FrontendCommand>(request.body()) {
+                let _ = ipc_proxy.send_event(UserEvent::Frontend(command));
+            }
+        })
+        .with_url(&format!("{base_url}/index.html"))
+        .build(&window)
+        .context("failed to build webview")?;
+
+    let settings = load_settings(&app_paths.settings_path);
+    let mut state = AppState {
+        project: None,
+        output_dir: settings.last_output_dir.clone().unwrap_or_default(),
+        status: "Ready.".to_string(),
+        base_url,
+        settings,
+        settings_path: app_paths.settings_path.clone(),
+    };
+    restore_last_project(&mut state, &protocol_state);
+    event_loop.run(move |event, _target, control_flow| {
+        *control_flow = ControlFlow::Wait;
+        match event {
+            Event::UserEvent(UserEvent::Frontend(command)) => {
+                handle_command(command, &mut state, &protocol_state);
+                if let Err(err) = push_state(&webview, &state) {
+                    state.status = format!("UI sync failed: {err:#}");
+                    let _ = push_state(&webview, &state);
+                }
+            }
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } => {
+                *control_flow = ControlFlow::Exit;
+            }
+            _ => {}
+        }
     });
+
+    #[allow(unreachable_code)]
+    Ok(())
 }
 
-impl eframe::App for MviewerGuiApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.handle_dropped_files(ctx);
+fn handle_command(
+    command: FrontendCommand,
+    state: &mut AppState,
+    protocol_state: &Arc<Mutex<ProtocolState>>,
+) {
+    match command {
+        FrontendCommand::Ready => {}
+        FrontendCommand::OpenProject => open_project(state, protocol_state),
+        FrontendCommand::OpenRecentProject { path } => {
+            open_project_path(state, protocol_state, PathBuf::from(path))
+        }
+        FrontendCommand::ChooseOutputDir => choose_output_dir(state),
+        FrontendCommand::SetTextureFormat { format } => set_texture_format(state, &format),
+        FrontendCommand::ExportScene => export_scene(state),
+        FrontendCommand::ExportTexture {
+            texture_name,
+            format,
+        } => export_texture(state, &texture_name, &format),
+    }
+}
 
-        if self.animation_playing {
-            if let Some(project) = &self.project {
-                if let Some(animations) = &project.animations {
-                    if let Some(index) = self.selected_animation_index {
-                        if let Some(clip) = animations.animations.get(index) {
-                            if clip.desc.length > f32::EPSILON {
-                                self.animation_time =
-                                    (self.animation_time + ctx.input(|input| input.stable_dt))
-                                        % clip.desc.length.max(0.0001);
-                                ctx.request_repaint();
-                            }
-                        }
-                    }
-                }
+fn open_project(state: &mut AppState, protocol_state: &Arc<Mutex<ProtocolState>>) {
+    let Some(path) = FileDialog::new()
+        .add_filter("Marmoset Viewer scene", &["mview"])
+        .pick_file()
+    else {
+        return;
+    };
+
+    open_project_path(state, protocol_state, path);
+}
+
+fn open_project_path(
+    state: &mut AppState,
+    protocol_state: &Arc<Mutex<ProtocolState>>,
+    path: PathBuf,
+) {
+    match load_project(&path) {
+        Ok(project) => {
+            if state.output_dir.trim().is_empty() {
+                state.output_dir = default_output_dir(&path).display().to_string();
+            }
+            state.status = format!("Loaded {}", path.display());
+            state.project = Some(project);
+            if let Ok(mut shared) = protocol_state.lock() {
+                shared.current_scene_path = Some(path.clone());
+            }
+            remember_recent_file(&mut state.settings, &path);
+            state.settings.last_opened_file = Some(path.display().to_string());
+            state.settings.last_output_dir = Some(state.output_dir.clone());
+            persist_settings(state);
+        }
+        Err(err) => {
+            state.status = format!("Load failed: {err:#}");
+        }
+    }
+}
+
+fn choose_output_dir(state: &mut AppState) {
+    if let Some(path) = FileDialog::new().pick_folder() {
+        state.output_dir = path.display().to_string();
+        state.status = format!("Output folder set to {}", path.display());
+        state.settings.last_output_dir = Some(state.output_dir.clone());
+        persist_settings(state);
+    }
+}
+
+fn set_texture_format(state: &mut AppState, format: &str) {
+    state.settings.texture_format = match format.to_ascii_lowercase().as_str() {
+        "tga" => "tga".to_string(),
+        _ => "png".to_string(),
+    };
+    persist_settings(state);
+}
+
+fn export_scene(state: &mut AppState) {
+    let Some(project) = &state.project else {
+        state.status = "Load a .mview file first.".to_string();
+        return;
+    };
+    let output_dir = PathBuf::from(state.output_dir.trim());
+    match export_project(project, &output_dir, &ExportOptions::include_all(&project.scene)) {
+        Ok(report) => {
+            state.status = format!(
+                "Exported {} of {} meshes to {}",
+                report.exported_meshes,
+                report.total_meshes,
+                report.output_dir.display()
+            );
+        }
+        Err(err) => {
+            state.status = format!("Export failed: {err:#}");
+        }
+    }
+}
+
+fn export_texture(state: &mut AppState, texture_name: &str, format: &str) {
+    let Some(project) = &state.project else {
+        state.status = "Load a .mview file first.".to_string();
+        return;
+    };
+    let output_dir = PathBuf::from(state.output_dir.trim()).join("textures");
+    let format = match format.to_ascii_lowercase().as_str() {
+        "tga" => TextureExportFormat::Tga,
+        _ => TextureExportFormat::Png,
+    };
+    state.settings.texture_format = match format {
+        TextureExportFormat::Png => "png".to_string(),
+        TextureExportFormat::Tga => "tga".to_string(),
+    };
+    persist_settings(state);
+    match export_texture_asset(project, texture_name, &output_dir, format) {
+        Ok(path) => {
+            state.status = format!("Exported texture to {}", path.display());
+        }
+        Err(err) => {
+            state.status = format!("Texture export failed: {err:#}");
+        }
+    }
+}
+
+fn push_state(webview: &wry::WebView, state: &AppState) -> Result<()> {
+    let json = serde_json::to_string(&build_view_state(state)).context("failed to serialize UI state")?;
+    webview
+        .evaluate_script(&format!("window.__mviewerReceive({json});"))
+        .context("failed to evaluate UI update script")?;
+    Ok(())
+}
+
+fn build_view_state(state: &AppState) -> AppViewState {
+    let (loaded, input_path) = if let Some(project) = &state.project {
+        (
+            true,
+            Some(project.input_path.display().to_string()),
+        )
+    } else {
+        (false, None)
+    };
+
+    AppViewState {
+        loaded,
+        input_path,
+        scene_url: loaded.then_some(format!("{}/scene/current.mview", state.base_url)),
+        output_dir: state.output_dir.clone(),
+        status: state.status.clone(),
+        texture_format: if state.settings.texture_format.is_empty() {
+            "png".to_string()
+        } else {
+            state.settings.texture_format.clone()
+        },
+        recent_files: state.settings.recent_files.clone(),
+    }
+}
+
+fn app_paths() -> Result<AppPaths> {
+    let dirs = ProjectDirs::from("com", "majidarif", "mviewer")
+        .context("failed to resolve app data directories")?;
+    let config_dir = dirs.config_dir();
+    let data_local_dir = dirs.data_local_dir();
+    std::fs::create_dir_all(config_dir).context("failed to create config directory")?;
+    std::fs::create_dir_all(data_local_dir).context("failed to create local data directory")?;
+    let webview_data_dir = data_local_dir.join("webview");
+    std::fs::create_dir_all(&webview_data_dir).context("failed to create webview data directory")?;
+    Ok(AppPaths {
+        settings_path: config_dir.join("settings.json"),
+        webview_data_dir,
+    })
+}
+
+fn load_settings(settings_path: &Path) -> AppSettings {
+    let mut settings = std::fs::read_to_string(settings_path)
+        .ok()
+        .and_then(|json| serde_json::from_str::<AppSettings>(&json).ok())
+        .unwrap_or_default();
+    settings.recent_files.retain(|path| Path::new(path).exists());
+    if settings.texture_format.is_empty() {
+        settings.texture_format = "png".to_string();
+    }
+    settings
+}
+
+fn persist_settings(state: &AppState) {
+    if let Ok(json) = serde_json::to_string_pretty(&state.settings) {
+        let _ = std::fs::write(&state.settings_path, json);
+    }
+}
+
+fn remember_recent_file(settings: &mut AppSettings, path: &Path) {
+    let path_string = path.display().to_string();
+    settings.recent_files.retain(|existing| existing != &path_string);
+    settings.recent_files.insert(0, path_string);
+    settings.recent_files.truncate(10);
+}
+
+fn restore_last_project(state: &mut AppState, protocol_state: &Arc<Mutex<ProtocolState>>) {
+    let Some(path) = state.settings.last_opened_file.as_ref().map(PathBuf::from) else {
+        return;
+    };
+    if path.exists() {
+        open_project_path(state, protocol_state, path);
+    }
+}
+
+fn start_http_server(protocol_state: Arc<Mutex<ProtocolState>>) -> Result<String> {
+    let port = reserve_local_port()?;
+    let bind_addr = format!("127.0.0.1:{port}");
+    let server = Server::http(&bind_addr)
+        .map_err(|err| anyhow::anyhow!("failed to start local preview server: {err}"))?;
+    thread::spawn(move || {
+        for request in server.incoming_requests() {
+            let url: &str = request.url();
+            let path = url.split('?').next().unwrap_or("/");
+            let method = request.method().clone();
+            let response = handle_http_request(method, path, &protocol_state);
+            let _ = request.respond(response);
+        }
+    });
+    Ok(format!("http://{bind_addr}"))
+}
+
+fn reserve_local_port() -> Result<u16> {
+    let listener = TcpListener::bind("127.0.0.1:0").context("failed to reserve preview server port")?;
+    let port = listener.local_addr().context("failed to inspect preview server port")?.port();
+    drop(listener);
+    Ok(port)
+}
+
+fn handle_http_request(
+    method: Method,
+    path: &str,
+    protocol_state: &Arc<Mutex<ProtocolState>>,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    if method != Method::Get && method != Method::Head {
+        return response_status(StatusCode(405), b"method not allowed".to_vec(), "text/plain; charset=utf-8");
+    }
+
+    match path {
+        "/" | "/index.html" => response_bytes("text/html; charset=utf-8", APP_HTML.as_bytes().to_vec()),
+        "/app.css" => response_bytes("text/css; charset=utf-8", include_bytes!("app.css").to_vec()),
+        "/favicon.ico" => response_bytes("image/x-icon", Vec::new()),
+        "/marmoset.js" => response_bytes(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../docs/reverse-engineering/marmoset-d3f745560e47d383adc4f6a322092030.js").to_vec(),
+        ),
+        "/marmoset-fork.js" => response_bytes(
+            "text/javascript; charset=utf-8",
+            include_bytes!("marmoset-fork.js").to_vec(),
+        ),
+        "/scene/current.mview" => {
+            let current = protocol_state
+                .lock()
+                .ok()
+                .and_then(|state| state.current_scene_path.clone());
+            match current.and_then(|scene_path| std::fs::read(scene_path).ok()) {
+                Some(bytes) => response_bytes("application/octet-stream", bytes),
+                None => response_status(StatusCode(404), b"scene not loaded".to_vec(), "text/plain; charset=utf-8"),
             }
         }
-
-        egui::TopBottomPanel::top("top_bar")
-            .exact_height(40.0)
-            .show(ctx, |ui| self.draw_toolbar(ui));
-
-        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
-            ui.label(&self.status);
-        });
-
-        egui::SidePanel::left("sidebar")
-            .resizable(true)
-            .default_width(230.0)
-            .show(ctx, |ui| self.draw_sidebar(ui));
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            if self.project.is_none() {
-                ui.heading("mviewer GUI");
-                ui.label("Open or drag a `.mview` file to begin.");
-                ui.separator();
-                ui.label("The GUI has been reset and is being rebuilt around the runtime viewer architecture.");
-                return;
+        _ if path.starts_with("/texture/") => {
+            let encoded = path.trim_start_matches("/texture/");
+            let texture_name = match decode_texture_route(encoded) {
+                Some(name) => name,
+                None => return response_status(StatusCode(400), b"invalid texture route".to_vec(), "text/plain; charset=utf-8"),
+            };
+            let current = protocol_state
+                .lock()
+                .ok()
+                .and_then(|state| state.current_scene_path.clone());
+            let Some(scene_path) = current else {
+                return response_status(StatusCode(404), b"scene not loaded".to_vec(), "text/plain; charset=utf-8");
+            };
+            match load_project(&scene_path)
+                .ok()
+                .and_then(|project| project.archive.get(&texture_name).map(|entry| (entry.data.clone(), texture_name)))
+            {
+                Some((bytes, name)) => response_bytes(texture_content_type(&name), bytes),
+                None => response_status(StatusCode(404), b"texture not found".to_vec(), "text/plain; charset=utf-8"),
             }
-
-            let project = self.project.take().expect("project checked above");
-            egui::ScrollArea::vertical()
-                .id_salt("central_content_scroll")
-                .show(ui, |ui| {
-                    self.draw_runtime_panel(ui, &project);
-                    ui.add_space(10.0);
-
-                    match self.active_tab {
-                        NavTab::Scene => self.draw_scene_tab(ui, &project),
-                        NavTab::Materials => self.draw_materials_tab(ui, &project),
-                        NavTab::Animations => self.draw_animations_tab(ui, &project),
-                        NavTab::Export => self.draw_export_tab(ui, &project),
-                    }
-                });
-
-            self.project = Some(project);
-        });
+        }
+        _ => response_status(StatusCode(404), b"not found".to_vec(), "text/plain; charset=utf-8"),
     }
+}
+
+fn response_bytes(
+    content_type: &'static str,
+    bytes: Vec<u8>,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    let mut response = Response::from_data(bytes);
+    if let Ok(header) = Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()) {
+        response.add_header(header);
+    }
+    if let Ok(header) = Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]) {
+        response.add_header(header);
+    }
+    response
+}
+
+fn response_status(
+    status: StatusCode,
+    bytes: Vec<u8>,
+    content_type: &'static str,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    let mut response = Response::from_data(bytes).with_status_code(status);
+    if let Ok(header) = Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()) {
+        response.add_header(header);
+    }
+    response
+}
+
+fn decode_texture_route(encoded: &str) -> Option<String> {
+    let padded = match encoded.len() % 4 {
+        0 => encoded.to_string(),
+        2 => format!("{encoded}=="),
+        3 => format!("{encoded}="),
+        _ => return None,
+    };
+    let bytes = base64::engine::general_purpose::URL_SAFE
+        .decode(padded.as_bytes())
+        .ok()?;
+    String::from_utf8(bytes).ok()
+}
+
+fn texture_content_type(name: &str) -> &'static str {
+    match Path::new(name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("tga") => "image/x-tga",
+        Some("bmp") => "image/bmp",
+        _ => "application/octet-stream",
+    }
+}
+
+#[allow(dead_code)]
+fn sanitize_preview_path(path: &Path) -> String {
+    path.display().to_string()
 }

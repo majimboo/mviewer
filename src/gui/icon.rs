@@ -1,8 +1,9 @@
-use eframe::egui::IconData;
+use anyhow::{Context, Result};
+use tao::window::Icon;
 
-pub fn load_app_icon() -> IconData {
+pub fn load_app_icon() -> Result<Icon> {
     let image = image::load_from_memory(include_bytes!("../../marmoset_logos.webp"))
-        .expect("embedded GUI icon must decode");
+        .context("embedded GUI icon must decode")?;
     let mut rgba = image.into_rgba8();
     for pixel in rgba.pixels_mut() {
         if pixel[0] > 245 && pixel[1] > 245 && pixel[2] > 245 {
@@ -10,9 +11,5 @@ pub fn load_app_icon() -> IconData {
         }
     }
     let (width, height) = rgba.dimensions();
-    IconData {
-        rgba: rgba.into_raw(),
-        width,
-        height,
-    }
+    Icon::from_rgba(rgba.into_raw(), width, height).context("failed to create window icon")
 }

@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -148,13 +149,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Download artifacts
-        uses: actions/download-artifact@v5
-        with:
-          path: release-artifacts
+      - name: Download artifacts with GitHub CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p release-artifacts
+          gh run download ${{ github.run_id }} --dir release-artifacts
 
-      - name: Publish release assets
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: release-artifacts/*/*
+      - name: Publish release assets with GitHub CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if ! gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            gh release create "${{ github.ref_name }}" --title "${{ github.ref_name }}" --generate-notes
+          fi
+          gh release edit "${{ github.ref_name }}" --draft=false
+          find release-artifacts -type f -print0 | xargs -0 gh release upload "${{ github.ref_name }}" --clobber

@@ -249,6 +249,13 @@ main {
   letter-spacing: 0.22em;
 }
 
+.preview-loading-message {
+  margin-top: 14px;
+  color: var(--text);
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+
 .preview-copy {
   position: absolute;
   inset: 0;

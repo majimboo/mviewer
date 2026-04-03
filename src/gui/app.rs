@@ -75,6 +75,7 @@ const APP_HTML: &str = r#"<!doctype html>
             <div class="preview-loading-brand">
               <div class="preview-loading-title">mviewer</div>
               <div class="preview-loading-subtitle">github.com/majimboo</div>
+              <div class="preview-loading-message" id="previewLoadingMessage">Loading preview…</div>
             </div>
           </div>
           <div class="options-overlay hidden" id="sourceOverlay">
@@ -459,6 +460,13 @@ const APP_HTML: &str = r#"<!doctype html>
         `${meta.title || '(untitled)'} | ${meshes} meshes | ${materialsList.length} materials | ${cameras} cameras | ${lights} lights | ${animations.length} animations`;
     }
 
+    function setPreviewLoading(visible, message) {
+      const overlay = document.getElementById('previewLoading');
+      const messageNode = document.getElementById('previewLoadingMessage');
+      messageNode.textContent = message || 'Loading preview…';
+      overlay.classList.toggle('hidden', !visible);
+    }
+
     function watchSceneState() {
       const scene = runtimeViewer?.scene;
       if (!scene || !scene.sceneLoaded) {
@@ -476,6 +484,7 @@ const APP_HTML: &str = r#"<!doctype html>
       renderRecentDatalist('recentLocalList', state.recent_files);
       renderRecentDatalist('recentUrlList', state.recent_urls);
       renderExportState(state);
+      setPreviewLoading(!!state.loading_scene, state.loading_message);
 
       const previewText = document.getElementById('previewText');
       if (state.loaded && state.scene_url) {
@@ -483,7 +492,9 @@ const APP_HTML: &str = r#"<!doctype html>
         ensurePreview(state.scene_url);
       } else {
         previewText.classList.remove('hidden');
-        document.getElementById('previewLoading').classList.add('hidden');
+        if (!state.loading_scene) {
+          setPreviewLoading(false);
+        }
         runtimeViewerSceneUrl = null;
         runtimeViewer = null;
         renderEmptySceneState();
@@ -501,7 +512,7 @@ const APP_HTML: &str = r#"<!doctype html>
         resizePreview();
         return;
       }
-      document.getElementById('previewLoading').classList.remove('hidden');
+      setPreviewLoading(true, latestState?.loading_message || 'Loading preview…');
       host.innerHTML = '';
       currentArchiveBuffer = null;
       const width = Math.max(320, host.clientWidth || 960);
@@ -518,15 +529,16 @@ const APP_HTML: &str = r#"<!doctype html>
       runtimeViewer.domRoot.style.height = '100%';
       host.appendChild(runtimeViewer.domRoot);
       runtimeViewer.onLoad = () => {
-        document.getElementById('previewLoading').classList.add('hidden');
+        setPreviewLoading(false);
         setStatus('Preview loaded.');
+        post({ cmd: 'previewLoaded' });
         watchSceneState();
       };
       try {
         runtimeViewer.loadScene(sceneUrl);
         setStatus('Loading embedded preview...');
       } catch (error) {
-        document.getElementById('previewLoading').classList.add('hidden');
+        setPreviewLoading(false);
         console.error('Failed to load preview scene', error);
         setStatus(`Preview load failed: ${error?.message || error}`);
       }
@@ -583,6 +595,8 @@ struct AppState {
     status: String,
     base_url: String,
     scene_revision: u64,
+    loading_scene: bool,
+    loading_message: String,
     exporting: bool,
     export_progress: u8,
     export_stage: String,
@@ -605,6 +619,7 @@ enum FrontendCommand {
     Ready,
     OpenProject,
     BrowseLocalFile,
+    PreviewLoaded,
     OpenRecentFile {
         path: String,
     },
@@ -653,6 +668,8 @@ struct AppViewState {
     recent_urls: Vec<String>,
     scene_url: Option<String>,
     status: String,
+    loading_scene: bool,
+    loading_message: String,
     exporting: bool,
     export_progress: u8,
     export_stage: String,
@@ -730,6 +747,8 @@ pub fn run() -> Result<()> {
         status: "Ready.".to_string(),
         base_url,
         scene_revision: 0,
+        loading_scene: false,
+        loading_message: String::new(),
         exporting: false,
         export_progress: 0,
         export_stage: String::new(),
@@ -784,7 +803,10 @@ pub fn run() -> Result<()> {
             Event::UserEvent(UserEvent::DownloadFinished { result }) => {
                 match result {
                     Ok(path) => open_project_path(&mut state, &protocol_state, path),
-                    Err(err) => state.status = format!("Download failed: {err}"),
+                    Err(err) => {
+                        finish_loading(&mut state);
+                        state.status = format!("Download failed: {err}");
+                    }
                 }
                 if let Err(err) = push_state(&webview, &state) {
                     state.status = format!("UI sync failed: {err:#}");
@@ -795,10 +817,14 @@ pub fn run() -> Result<()> {
                 hidden_resolver = None;
                 match result {
                     Ok(url) => {
+                        begin_loading(&mut state, "Downloading .mview…");
                         state.status = format!("Resolved ArtStation embed: {url}");
                         start_download_job(&mut state, &proxy, url);
                     }
-                    Err(err) => state.status = format!("ArtStation resolve failed: {err}"),
+                    Err(err) => {
+                        finish_loading(&mut state);
+                        state.status = format!("ArtStation resolve failed: {err}");
+                    }
                 }
                 if let Err(err) = push_state(&webview, &state) {
                     state.status = format!("UI sync failed: {err:#}");
@@ -832,17 +858,30 @@ fn handle_command(
         FrontendCommand::Ready => {}
         FrontendCommand::OpenProject => open_project(state, protocol_state),
         FrontendCommand::BrowseLocalFile => browse_local_file(state),
+        FrontendCommand::PreviewLoaded => {
+            finish_loading(state);
+            if let Some(path) = &state.input_path {
+                state.status = format!("Loaded {}", path.display());
+            } else {
+                state.status = "Preview loaded.".to_string();
+            }
+        }
         FrontendCommand::OpenRecentFile { path } => open_project_path(state, protocol_state, PathBuf::from(path)),
         FrontendCommand::ChooseOutputDir => choose_output_dir(state),
         FrontendCommand::ExportScene => export_scene(state, proxy),
         FrontendCommand::DownloadFromUrl { url } => {
             if is_artstation_artwork_url(&url) {
+                begin_loading(state, "Resolving ArtStation page…");
                 state.status = format!("Resolving ArtStation page {url}");
                 match start_artstation_resolver(target, proxy, hidden_web_context, &url) {
                     Ok(resolver) => *hidden_resolver = Some(resolver),
-                    Err(err) => state.status = format!("ArtStation resolve failed: {err:#}"),
+                    Err(err) => {
+                        finish_loading(state);
+                        state.status = format!("ArtStation resolve failed: {err:#}");
+                    }
                 }
             } else {
+                begin_loading(state, "Downloading .mview…");
                 start_download_job(state, proxy, url);
             }
         }
@@ -882,6 +921,8 @@ fn open_project_path(
     state.local_path_draft = path.display().to_string();
     state.js_export_scene = None;
     state.scene_revision = state.scene_revision.saturating_add(1);
+    state.loading_scene = true;
+    state.loading_message = "Loading preview…".to_string();
     if state.output_dir.trim().is_empty() {
         state.output_dir = path
             .parent()
@@ -897,6 +938,16 @@ fn open_project_path(
     state.settings.last_opened_file = Some(path.display().to_string());
     state.settings.last_output_dir = Some(state.output_dir.clone());
     persist_settings(state);
+}
+
+fn begin_loading(state: &mut AppState, message: impl Into<String>) {
+    state.loading_scene = true;
+    state.loading_message = message.into();
+}
+
+fn finish_loading(state: &mut AppState) {
+    state.loading_scene = false;
+    state.loading_message.clear();
 }
 
 fn export_scene(state: &mut AppState, proxy: &tao::event_loop::EventLoopProxy<UserEvent>) {
@@ -1055,6 +1106,8 @@ fn build_view_state(state: &AppState) -> AppViewState {
             state.base_url, state.scene_revision
         )),
         status: state.status.clone(),
+        loading_scene: state.loading_scene,
+        loading_message: state.loading_message.clone(),
         exporting: state.exporting,
         export_progress: state.export_progress,
         export_stage: state.export_stage.clone(),

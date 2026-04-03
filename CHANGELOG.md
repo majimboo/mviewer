@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.2 - 2026-04-03
+
+- added visible progress/loading feedback for URL-based scene loading in the desktop app
+- switched release publishing to GitHub CLI to avoid deprecated Node 20 release actions
+
 ## 2.1.1 - 2026-04-03
 
 - refreshed release docs/media assets

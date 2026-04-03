@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.1 - 2026-04-03
+
+- refreshed release docs/media assets
+- added the animated preview GIF to the published docs assets
+
 ## 2.1.0 - 2026-04-03
 
 - unified the project into a single `mviewer` binary: no arguments launch the GUI, arguments run the CLI

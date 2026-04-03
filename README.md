@@ -6,7 +6,7 @@
 
 Rust-native exporter for Marmoset `.mview` scenes.
 
-![vivfox export preview](docs/images/vivfox-exporter-screenshot.png)
+![vivfox export preview](docs/images/sample.gif)
 
 ## Download
 

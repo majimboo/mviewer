@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use base64::Engine as _;
@@ -190,12 +190,32 @@ pub struct JsMaterial {
     pub desc: Option<serde_json::Value>,
 }
 
-pub fn write_js_export_scene(output_dir: &Path, scene: &JsExportScene) -> Result<PathBuf> {
-    std::fs::create_dir_all(output_dir).context("failed to create export output directory")?;
-    let path = output_dir.join("js_export_scene.json");
-    let json = serde_json::to_vec_pretty(scene).context("failed to serialize JS export scene")?;
-    std::fs::write(&path, json).context("failed to write JS export scene")?;
-    Ok(path)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GuiExportFormat {
+    Gltf,
+    Glb,
+    Obj,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GuiExportOptions {
+    pub format: GuiExportFormat,
+    #[serde(default)]
+    pub included_meshes: Vec<usize>,
+    #[serde(default = "default_true")]
+    pub include_textures: bool,
+    #[serde(default = "default_true")]
+    pub include_animations: bool,
+    #[serde(default = "default_true")]
+    pub include_cameras: bool,
+    #[serde(default = "default_true")]
+    pub include_lights: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 pub fn export_from_js_scene_path(
@@ -203,13 +223,52 @@ pub fn export_from_js_scene_path(
     output_dir: &Path,
     js_scene: &JsExportScene,
 ) -> Result<ExportReport> {
-    export_from_js_scene_path_with_progress(input_path, output_dir, js_scene, |_progress, _stage| {})
+    export_from_js_scene_path_with_options_and_progress(
+        input_path,
+        output_dir,
+        js_scene,
+        &GuiExportOptions {
+            format: GuiExportFormat::Gltf,
+            included_meshes: Vec::new(),
+            include_textures: true,
+            include_animations: true,
+            include_cameras: true,
+            include_lights: true,
+        },
+        |_progress, _stage| {},
+    )
 }
 
 pub fn export_from_js_scene_path_with_progress<F>(
     input_path: &Path,
     output_dir: &Path,
     js_scene: &JsExportScene,
+    mut progress: F,
+) -> Result<ExportReport>
+where
+    F: FnMut(u8, &str),
+{
+    export_from_js_scene_path_with_options_and_progress(
+        input_path,
+        output_dir,
+        js_scene,
+        &GuiExportOptions {
+            format: GuiExportFormat::Gltf,
+            included_meshes: Vec::new(),
+            include_textures: true,
+            include_animations: true,
+            include_cameras: true,
+            include_lights: true,
+        },
+        &mut progress,
+    )
+}
+
+pub fn export_from_js_scene_path_with_options_and_progress<F>(
+    input_path: &Path,
+    output_dir: &Path,
+    js_scene: &JsExportScene,
+    export_options: &GuiExportOptions,
     mut progress: F,
 ) -> Result<ExportReport>
 where
@@ -230,22 +289,65 @@ where
         .context("scene.json not found in archive")?;
     let base_scene = Scene::from_bytes(&scene_entry.data)?;
     progress(35, "Merging Marmoset runtime data");
-    let merged_scene = merge_js_export_scene(&base_scene, js_scene);
-    let options = ExportOptions::include_all(&merged_scene);
+    let mut merged_scene = merge_js_export_scene(&base_scene, js_scene);
+    if !export_options.include_textures {
+        strip_scene_textures(&mut merged_scene);
+    }
+    let options = build_export_options(&merged_scene, export_options);
     let filtered_scene = filter_scene_for_export(&merged_scene, &options);
-    progress(55, "Starting glTF export");
-    crate::gltf::export_scene_with_js_scene_progress(
-        &archive,
-        &filtered_scene,
-        input_path,
-        output_dir,
-        Some(js_scene),
-        &mut |local_progress, stage| {
-            let mapped = 55 + (u16::from(local_progress) * 40 / 100) as u8;
-            progress(mapped, stage);
-        },
-    )?;
-    progress(95, "Finalizing export");
+
+    match export_options.format {
+        GuiExportFormat::Gltf => {
+            progress(55, "Starting glTF export");
+            crate::gltf::export_scene_with_js_scene_format_progress(
+                &archive,
+                &filtered_scene,
+                input_path,
+                output_dir,
+                Some(js_scene),
+                crate::gltf::GltfOutputFormat::Gltf,
+                &mut |local_progress, stage| {
+                    let mapped = 55 + (u16::from(local_progress) * 40 / 100) as u8;
+                    progress(mapped, stage);
+                },
+            )?;
+            progress(95, "Finalizing export");
+        }
+        GuiExportFormat::Glb => {
+            progress(55, "Starting GLB export");
+            crate::gltf::export_scene_with_js_scene_format_progress(
+                &archive,
+                &filtered_scene,
+                input_path,
+                output_dir,
+                Some(js_scene),
+                crate::gltf::GltfOutputFormat::Glb,
+                &mut |local_progress, stage| {
+                    let mapped = 55 + (u16::from(local_progress) * 40 / 100) as u8;
+                    progress(mapped, stage);
+                },
+            )?;
+            progress(95, "Finalizing export");
+        }
+        GuiExportFormat::Obj => {
+            progress(55, "Starting OBJ export");
+            crate::obj::export_scene(
+                &archive,
+                &filtered_scene,
+                input_path,
+                output_dir,
+                &crate::obj::ObjExportOptions {
+                    included_meshes: options.included_meshes.clone(),
+                    include_textures: export_options.include_textures,
+                },
+                &mut |local_progress, stage| {
+                    let mapped = 55 + (u16::from(local_progress) * 40 / 100) as u8;
+                    progress(mapped, stage);
+                },
+            )?;
+            progress(95, "Finalizing export");
+        }
+    }
 
     Ok(ExportReport {
         output_dir: output_dir.to_path_buf(),
@@ -319,6 +421,17 @@ pub fn merge_js_export_scene(base_scene: &Scene, js_scene: &JsExportScene) -> Sc
     merged
 }
 
+fn build_export_options(scene: &Scene, options: &GuiExportOptions) -> ExportOptions {
+    let mut export_options = ExportOptions::include_all(scene);
+    if !options.included_meshes.is_empty() {
+        export_options.included_meshes = options.included_meshes.iter().copied().collect();
+    }
+    export_options.include_animations = options.include_animations;
+    export_options.include_cameras = options.include_cameras;
+    export_options.include_lights = options.include_lights;
+    export_options
+}
+
 fn build_lights_from_js(js_lights: &[JsLight], fallback: Option<&Lights>) -> Lights {
     let count = js_lights.len();
     let mut positions = Vec::with_capacity(count * 4);
@@ -386,4 +499,16 @@ fn filter_scene_for_export(scene: &Scene, options: &ExportOptions) -> Scene {
     }
 
     filtered
+}
+
+fn strip_scene_textures(scene: &mut Scene) {
+    for material in &mut scene.materials {
+        material.albedo_tex.clear();
+        material.alpha_tex = None;
+        material.normal_tex = None;
+        material.reflectivity_tex = None;
+        material.gloss_tex = None;
+        material.extras_tex = None;
+        material.extras_tex_a = None;
+    }
 }

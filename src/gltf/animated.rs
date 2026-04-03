@@ -4,6 +4,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde_json::json;
 
+use super::GltfOutputFormat;
 use crate::animation::{
     ParsedAnimation, ParsedAnimationSet, ParsedAnimatedObject, identity_matrix, lerp_matrix4,
     mul_matrix4 as animation_mul_matrix4,
@@ -27,6 +28,7 @@ pub fn export_animated_scene(
     input_path: &Path,
     output_dir: &Path,
     js_scene: Option<&JsExportScene>,
+    output_format: GltfOutputFormat,
     progress: &mut dyn FnMut(u8, &str),
 ) -> Result<()> {
     let Some(primary_animation) = selected_primary_animation(scene, animations) else {
@@ -37,6 +39,7 @@ pub fn export_animated_scene(
             material_lookup,
             input_path,
             output_dir,
+            output_format,
             progress,
         );
     };
@@ -209,7 +212,7 @@ pub fn export_animated_scene(
         .and_then(|stem| stem.to_str())
         .unwrap_or("scene");
     progress(98, "Writing scene files");
-    std::mem::take(builder).finish(scene_name, scene_roots, scene, output_dir)
+    std::mem::take(builder).finish(scene_name, scene_roots, scene, output_dir, output_format)
 }
 
 fn selected_primary_animation<'a>(
@@ -299,6 +302,7 @@ fn attach_runtime_scene_bindings(
     }
 }
 
+#[allow(dead_code)]
 fn build_runtime_metadata(
     scene: &Scene,
     animations: &ParsedAnimationSet,
@@ -376,6 +380,7 @@ fn build_runtime_metadata(
     })
 }
 
+#[allow(dead_code)]
 fn build_clip_runtime_metadata(
     animation: &ParsedAnimation,
     scene_scale: f32,
@@ -450,6 +455,7 @@ fn build_clip_runtime_metadata(
     })
 }
 
+#[allow(dead_code)]
 fn build_clip_frame_samples(
     animation: &ParsedAnimation,
     scene_scale: f32,
@@ -512,6 +518,7 @@ fn build_clip_frame_samples(
         .collect()
 }
 
+#[allow(dead_code)]
 fn is_transform_property(name: &str) -> bool {
     matches!(
         name,
@@ -527,6 +534,7 @@ fn is_transform_property(name: &str) -> bool {
     )
 }
 
+#[allow(dead_code)]
 fn build_runtime_property_tracks(
     animation: &ParsedAnimation,
     object_index: usize,
@@ -570,6 +578,7 @@ fn build_runtime_property_tracks(
         .collect()
 }
 
+#[allow(dead_code)]
 fn runtime_property_default(property_name: &str) -> f32 {
     match property_name {
         "Visible" => 1.0,
@@ -581,6 +590,7 @@ fn runtime_property_default(property_name: &str) -> f32 {
     }
 }
 
+#[allow(dead_code)]
 fn runtime_property_semantic(property_name: &str, scene_object_type: &str) -> &'static str {
     match property_name {
         "Visible" => "visibility",
@@ -655,12 +665,14 @@ fn runtime_property_semantic(property_name: &str, scene_object_type: &str) -> &'
     }
 }
 
+#[allow(dead_code)]
 fn has_nontrivial_scalar_animation(values: &[f32]) -> bool {
     values
         .windows(2)
         .any(|window| (window[0] - window[1]).abs() > 1e-5)
 }
 
+#[allow(dead_code)]
 fn map_bindings(bindings: &HashMap<usize, usize>, key: &str) -> Vec<serde_json::Value> {
     let mut pairs: Vec<_> = bindings.iter().collect();
     pairs.sort_by_key(|(object_index, _)| **object_index);
@@ -694,6 +706,7 @@ struct MeshSkinBinding {
     cluster_bindings: Vec<ClusterJointBinding>,
 }
 
+#[allow(dead_code)]
 struct ClusterJointBinding {
     node_index: usize,
     mesh_object_index: usize,
@@ -1351,6 +1364,7 @@ fn build_skin_binding(
     })
 }
 
+#[allow(dead_code)]
 fn find_skeleton_root(
     joints: &[usize],
     animation: &ParsedAnimation,

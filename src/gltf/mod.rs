@@ -16,9 +16,15 @@ use crate::js_export::JsExportScene;
 use crate::mesh::{DecodedMesh, decode_mesh};
 use crate::scene::{Lights, MainCamera, MaterialDesc, Scene, ViewDesc};
 use textures::{
-    merge_alpha_texture, merge_metallic_roughness_texture, merged_alpha_name,
-    merged_metallic_roughness_name,
+    merge_alpha_texture, merge_alpha_texture_bytes, merge_metallic_roughness_texture,
+    merge_metallic_roughness_texture_bytes, merged_alpha_name, merged_metallic_roughness_name,
 };
+
+#[derive(Clone, Copy)]
+pub enum GltfOutputFormat {
+    Gltf,
+    Glb,
+}
 
 pub(super) fn export_static_scene(
     builder: &mut GltfBuilder,
@@ -27,6 +33,7 @@ pub(super) fn export_static_scene(
     material_lookup: &HashMap<String, usize>,
     input_path: &Path,
     output_dir: &Path,
+    output_format: GltfOutputFormat,
     progress: &mut dyn FnMut(u8, &str),
 ) -> Result<()> {
     let mut mesh_nodes = Vec::new();
@@ -49,7 +56,7 @@ pub(super) fn export_static_scene(
         .and_then(|stem| stem.to_str())
         .unwrap_or("scene");
     progress(98, "Writing scene files");
-    std::mem::take(builder).finish(scene_name, mesh_nodes, scene, output_dir)
+    std::mem::take(builder).finish(scene_name, mesh_nodes, scene, output_dir, output_format)
 }
 
 pub fn export_scene(
@@ -69,13 +76,34 @@ pub fn export_scene_with_js_scene(
     js_scene: Option<&JsExportScene>,
 ) -> Result<()> {
     let mut noop = |_progress: u8, _stage: &str| {};
+    export_scene_with_js_scene_format_progress(
+        archive,
+        scene,
+        input_path,
+        output_dir,
+        js_scene,
+        GltfOutputFormat::Gltf,
+        &mut noop,
+    )
+}
+
+pub fn export_scene_with_js_scene_format_progress(
+    archive: &Archive,
+    scene: &Scene,
+    input_path: &Path,
+    output_dir: &Path,
+    js_scene: Option<&JsExportScene>,
+    output_format: GltfOutputFormat,
+    progress: &mut dyn FnMut(u8, &str),
+) -> Result<()> {
     export_scene_with_js_scene_progress(
         archive,
         scene,
         input_path,
         output_dir,
         js_scene,
-        &mut noop,
+        output_format,
+        progress,
     )
 }
 
@@ -85,12 +113,15 @@ pub fn export_scene_with_js_scene_progress(
     input_path: &Path,
     output_dir: &Path,
     js_scene: Option<&JsExportScene>,
+    output_format: GltfOutputFormat,
     progress: &mut dyn FnMut(u8, &str),
 ) -> Result<()> {
     fs::create_dir_all(output_dir)
         .with_context(|| format!("failed to create {}", output_dir.display()))?;
-    progress(0, "Copying source textures");
-    export_source_texture_files(archive, output_dir, progress)?;
+    if matches!(output_format, GltfOutputFormat::Gltf) {
+        progress(0, "Copying source textures");
+        export_source_texture_files(archive, output_dir, progress)?;
+    }
 
     let mut builder = GltfBuilder::default();
     let mut material_lookup = HashMap::new();
@@ -114,6 +145,7 @@ pub fn export_scene_with_js_scene_progress(
             input_path,
             output_dir,
             js_scene,
+            output_format,
             progress,
         );
     }
@@ -125,6 +157,7 @@ pub fn export_scene_with_js_scene_progress(
         &material_lookup,
         input_path,
         output_dir,
+        output_format,
         progress,
     )
 }
@@ -135,6 +168,7 @@ pub(super) struct GltfBuilder {
     pub(super) accessors: Vec<Accessor>,
     pub(super) buffer_views: Vec<BufferView>,
     pub(super) images: Vec<ImageDef>,
+    pub(super) image_sources: Vec<ImageSource>,
     pub(super) textures: Vec<TextureDef>,
     pub(super) materials: Vec<MaterialDef>,
     pub(super) meshes: Vec<MeshDef>,
@@ -147,6 +181,12 @@ pub(super) struct GltfBuilder {
     pub(super) root_extras: Option<serde_json::Value>,
     pub(super) bound_camera_names: HashSet<String>,
     pub(super) bound_light_indices: HashSet<usize>,
+}
+
+pub(super) struct ImageSource {
+    pub(super) name: String,
+    pub(super) mime_type: String,
+    pub(super) data: Vec<u8>,
 }
 
 impl GltfBuilder {
@@ -259,9 +299,15 @@ impl GltfBuilder {
 
             let image_index = self.images.len();
             self.images.push(ImageDef {
-                uri: merged_name.clone(),
+                uri: Some(merged_name.clone()),
+                buffer_view: None,
                 mime_type: None,
                 name: Some(merged_name.clone()),
+            });
+            self.image_sources.push(ImageSource {
+                name: merged_name.clone(),
+                mime_type: "image/png".to_string(),
+                data: merge_alpha_texture_bytes(&albedo.data, &alpha.data)?,
             });
             let texture_index = self.textures.len();
             self.textures.push(TextureDef {
@@ -297,9 +343,15 @@ impl GltfBuilder {
 
         let image_index = self.images.len();
         self.images.push(ImageDef {
-            uri: name.to_string(),
+            uri: Some(name.to_string()),
+            buffer_view: None,
             mime_type: None,
             name: Some(name.to_string()),
+        });
+        self.image_sources.push(ImageSource {
+            name: name.to_string(),
+            mime_type: guess_mime_type(name).to_string(),
+            data: entry.data.clone(),
         });
         let texture_index = self.textures.len();
         self.textures.push(TextureDef {
@@ -336,9 +388,15 @@ impl GltfBuilder {
 
         let image_index = self.images.len();
         self.images.push(ImageDef {
-            uri: merged_name.clone(),
+            uri: Some(merged_name.clone()),
+            buffer_view: None,
             mime_type: None,
             name: Some(merged_name.clone()),
+        });
+        self.image_sources.push(ImageSource {
+            name: merged_name.clone(),
+            mime_type: "image/png".to_string(),
+            data: merge_metallic_roughness_texture_bytes(&reflectivity.data, &gloss.data)?,
         });
         let texture_index = self.textures.len();
         self.textures.push(TextureDef {
@@ -416,6 +474,7 @@ impl GltfBuilder {
         self.push_f32mat4(values, Target::ArrayBuffer)
     }
 
+    #[allow(dead_code)]
     pub(super) fn node_local_matrix(&self, node_index: usize) -> [f32; 16] {
         let node = &self.nodes[node_index];
         if let Some(matrix) = node.matrix {
@@ -506,6 +565,7 @@ impl GltfBuilder {
         mut mesh_nodes: Vec<usize>,
         scene: &Scene,
         output_dir: &Path,
+        output_format: GltfOutputFormat,
     ) -> Result<()> {
         if let Some(main_camera) = &scene.main_camera {
             if !self.bound_camera_names.contains("Main Camera") {
@@ -561,10 +621,25 @@ impl GltfBuilder {
 
         let bin_name = format!("{scene_name}.bin");
         let gltf_name = format!("{scene_name}.gltf");
-        fs::write(output_dir.join(&bin_name), &self.buffer)
-            .with_context(|| format!("failed to write {}", output_dir.join(&bin_name).display()))?;
-
-        let root = GltfRoot {
+        if matches!(output_format, GltfOutputFormat::Glb) {
+            let image_payloads: Vec<_> = self
+                .image_sources
+                .iter()
+                .map(|image| (image.mime_type.clone(), image.data.clone()))
+                .collect();
+            for (image_index, (mime_type, data)) in image_payloads.into_iter().enumerate() {
+                let start = self.push_aligned_bytes();
+                self.buffer.extend_from_slice(&data);
+                let view_index =
+                    self.push_buffer_view(start, self.buffer.len() - start, Target::ArrayBuffer);
+                if let Some(def) = self.images.get_mut(image_index) {
+                    def.uri = None;
+                    def.buffer_view = Some(view_index);
+                    def.mime_type = Some(mime_type);
+                }
+            }
+        }
+        let mut root = GltfRoot {
             asset: AssetDef {
                 generator: "mviewer".to_string(),
                 version: "2.0".to_string(),
@@ -580,7 +655,7 @@ impl GltfBuilder {
             buffer_views: self.buffer_views,
             buffers: vec![BufferDef {
                 byte_length: self.buffer.len(),
-                uri: bin_name,
+                uri: matches!(output_format, GltfOutputFormat::Gltf).then_some(bin_name.clone()),
             }],
             materials: if self.materials.is_empty() {
                 None
@@ -630,14 +705,58 @@ impl GltfBuilder {
             extras: self.root_extras,
         };
 
-        let gltf_path = output_dir.join(gltf_name);
-        let json = serde_json::to_vec(&root)?;
-        let _library_root =
-            MythGltfRoot::from_slice(&json).context("generated glTF JSON failed myth-gltf-json validation parse")?;
-        let json = serde_json::to_vec_pretty(&root)?;
-        fs::write(&gltf_path, json)
-            .with_context(|| format!("failed to write {}", gltf_path.display()))?;
-        Ok(())
+        match output_format {
+            GltfOutputFormat::Gltf => {
+                fs::write(output_dir.join(&bin_name), &self.buffer)
+                    .with_context(|| format!("failed to write {}", output_dir.join(&bin_name).display()))?;
+                for image in &self.image_sources {
+                    let output_path = output_dir.join(&image.name);
+                    if let Some(parent) = output_path.parent() {
+                        fs::create_dir_all(parent)
+                            .with_context(|| format!("failed to create {}", parent.display()))?;
+                    }
+                    fs::write(&output_path, &image.data)
+                        .with_context(|| format!("failed to write {}", output_path.display()))?;
+                }
+                let gltf_path = output_dir.join(gltf_name);
+                let json = serde_json::to_vec(&root)?;
+                let _library_root =
+                    MythGltfRoot::from_slice(&json).context("generated glTF JSON failed myth-gltf-json validation parse")?;
+                let json = serde_json::to_vec_pretty(&root)?;
+                fs::write(&gltf_path, json)
+                    .with_context(|| format!("failed to write {}", gltf_path.display()))?;
+                Ok(())
+            }
+            GltfOutputFormat::Glb => {
+                root.buffers[0].byte_length = self.buffer.len();
+                root.buffers[0].uri = None;
+                let json = serde_json::to_vec(&root)?;
+                let _library_root =
+                    MythGltfRoot::from_slice(&json).context("generated glTF JSON failed myth-gltf-json validation parse")?;
+                let mut json = json;
+                while json.len() % 4 != 0 {
+                    json.push(b' ');
+                }
+                while self.buffer.len() % 4 != 0 {
+                    self.buffer.push(0);
+                }
+                let total_length = 12 + 8 + json.len() + 8 + self.buffer.len();
+                let mut glb = Vec::with_capacity(total_length);
+                glb.extend_from_slice(&0x46546C67u32.to_le_bytes());
+                glb.extend_from_slice(&2u32.to_le_bytes());
+                glb.extend_from_slice(&(total_length as u32).to_le_bytes());
+                glb.extend_from_slice(&(json.len() as u32).to_le_bytes());
+                glb.extend_from_slice(&0x4E4F534Au32.to_le_bytes());
+                glb.extend_from_slice(&json);
+                glb.extend_from_slice(&(self.buffer.len() as u32).to_le_bytes());
+                glb.extend_from_slice(&0x004E4942u32.to_le_bytes());
+                glb.extend_from_slice(&self.buffer);
+                let glb_path = output_dir.join(format!("{scene_name}.glb"));
+                fs::write(&glb_path, glb)
+                    .with_context(|| format!("failed to write {}", glb_path.display()))?;
+                Ok(())
+            }
+        }
     }
 
     fn add_camera_node(&mut self, name: &str, camera: &MainCamera) -> Option<usize> {
@@ -912,6 +1031,7 @@ enum Target {
     ElementArrayBuffer = 34963,
 }
 
+#[allow(dead_code)]
 pub(super) fn quaternion_from_euler_yxz(rotation_deg: [f32; 3]) -> [f32; 4] {
     let x = rotation_deg[0].to_radians() * 0.5;
     let y = rotation_deg[1].to_radians() * 0.5;
@@ -959,6 +1079,7 @@ pub(super) fn decompose_matrix_trs(matrix: [f32; 16]) -> ([f32; 3], [f32; 4], [f
     (translation, rotation, scale)
 }
 
+#[allow(dead_code)]
 fn mul_quaternion(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     [
         a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
@@ -1023,6 +1144,7 @@ fn quaternion_from_matrix(matrix: [f32; 16]) -> [f32; 4] {
     }
 }
 
+#[allow(dead_code)]
 fn compose_trs_matrix(translation: [f32; 3], rotation: [f32; 4], scale: [f32; 3]) -> [f32; 16] {
     let x = rotation[0];
     let y = rotation[1];
@@ -1061,6 +1183,7 @@ fn compose_trs_matrix(translation: [f32; 3], rotation: [f32; 4], scale: [f32; 3]
     ]
 }
 
+#[allow(dead_code)]
 pub(super) fn identity_matrix() -> [f32; 16] {
     [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
 }
@@ -1282,6 +1405,23 @@ fn is_source_texture_file(name: &str) -> bool {
     )
 }
 
+fn guess_mime_type(name: &str) -> &'static str {
+    match Path::new(name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("gif") => "image/gif",
+        Some("bmp") => "image/bmp",
+        Some("tga") => "image/x-tga",
+        Some("dds") => "image/vnd-ms.dds",
+        _ => "image/png",
+    }
+}
+
 fn archive_relative_output_path(name: &str) -> PathBuf {
     let mut path = PathBuf::new();
     let mut had_component = false;
@@ -1314,6 +1454,7 @@ fn sanitize_path_component(component: &str) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn path_to_slash(path: PathBuf) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
@@ -1507,7 +1648,8 @@ pub struct BufferView {
 pub struct BufferDef {
     #[serde(rename = "byteLength")]
     pub byte_length: usize,
-    pub uri: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uri: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -1558,7 +1700,10 @@ pub struct NormalTextureRef {
 
 #[derive(serde::Serialize)]
 pub struct ImageDef {
-    pub uri: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uri: Option<String>,
+    #[serde(rename = "bufferView", skip_serializing_if = "Option::is_none")]
+    pub buffer_view: Option<usize>,
     #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -3,6 +3,33 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+fn deserialize_boolish_option<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Boolish {
+        Bool(bool),
+        Int(i64),
+        Float(f64),
+        String(String),
+    }
+
+    let value = Option::<Boolish>::deserialize(deserializer)?;
+    Ok(match value {
+        None => None,
+        Some(Boolish::Bool(value)) => Some(value),
+        Some(Boolish::Int(value)) => Some(value != 0),
+        Some(Boolish::Float(value)) => Some(value != 0.0),
+        Some(Boolish::String(value)) => match value.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" => Some(true),
+            "false" | "0" => Some(false),
+            _ => None,
+        },
+    })
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Scene {
     #[serde(rename = "metaData")]
@@ -75,7 +102,7 @@ pub struct Lights {
     pub count: Option<usize>,
     #[serde(rename = "shadowCount")]
     pub shadow_count: Option<usize>,
-    #[serde(rename = "useNewAttenuation")]
+    #[serde(rename = "useNewAttenuation", default, deserialize_with = "deserialize_boolish_option")]
     pub use_new_attenuation: Option<bool>,
     pub rotation: Option<f32>,
     pub positions: Option<Vec<f32>>,
@@ -102,7 +129,7 @@ pub struct MeshDesc {
     pub secondary_tex_coord: Option<u32>,
     #[serde(rename = "vertexColor")]
     pub vertex_color: Option<u32>,
-    #[serde(rename = "isDynamicMesh")]
+    #[serde(rename = "isDynamicMesh", default, deserialize_with = "deserialize_boolish_option")]
     pub is_dynamic_mesh: Option<bool>,
     pub transform: Option<[f32; 16]>,
     pub file: String,
@@ -139,37 +166,40 @@ pub struct MaterialDesc {
     pub blend: Option<String>,
     #[serde(rename = "alphaTest")]
     pub alpha_test: Option<f32>,
-    #[serde(rename = "useSkin")]
+    #[serde(rename = "useSkin", default, deserialize_with = "deserialize_boolish_option")]
     pub use_skin: Option<bool>,
-    #[serde(rename = "ggxSpecular")]
+    #[serde(rename = "ggxSpecular", default, deserialize_with = "deserialize_boolish_option")]
     pub ggx_specular: Option<bool>,
-    #[serde(rename = "unlitDiffuse")]
+    #[serde(rename = "unlitDiffuse", default, deserialize_with = "deserialize_boolish_option")]
     pub unlit_diffuse: Option<bool>,
     pub fresnel: Option<[f32; 3]>,
     #[serde(rename = "horizonOcclude")]
     pub horizon_occlude: Option<f32>,
     #[serde(rename = "horizonSmoothing")]
     pub horizon_smoothing: Option<f32>,
+    #[serde(default, deserialize_with = "deserialize_boolish_option")]
     pub aniso: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_boolish_option")]
     pub microfiber: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_boolish_option")]
     pub refraction: Option<bool>,
     #[serde(rename = "emissiveIntensity")]
     pub emissive_intensity: Option<f32>,
-    #[serde(rename = "emissiveSecondaryUV")]
+    #[serde(rename = "emissiveSecondaryUV", default, deserialize_with = "deserialize_boolish_option")]
     pub emissive_secondary_uv: Option<bool>,
-    #[serde(rename = "aoSecondaryUV")]
+    #[serde(rename = "aoSecondaryUV", default, deserialize_with = "deserialize_boolish_option")]
     pub ao_secondary_uv: Option<bool>,
-    #[serde(rename = "vertexColor")]
+    #[serde(rename = "vertexColor", default, deserialize_with = "deserialize_boolish_option")]
     pub vertex_color: Option<bool>,
-    #[serde(rename = "vertexColorsRGB")]
+    #[serde(rename = "vertexColorsRGB", default, deserialize_with = "deserialize_boolish_option")]
     pub vertex_colors_rgb: Option<bool>,
-    #[serde(rename = "vertexColorAlpha")]
+    #[serde(rename = "vertexColorAlpha", default, deserialize_with = "deserialize_boolish_option")]
     pub vertex_color_alpha: Option<bool>,
-    #[serde(rename = "tangentOrthogonalize")]
+    #[serde(rename = "tangentOrthogonalize", default, deserialize_with = "deserialize_boolish_option")]
     pub tangent_orthogonalize: Option<bool>,
-    #[serde(rename = "tangentNormalize")]
+    #[serde(rename = "tangentNormalize", default, deserialize_with = "deserialize_boolish_option")]
     pub tangent_normalize: Option<bool>,
-    #[serde(rename = "tangentGenerateBitangent")]
+    #[serde(rename = "tangentGenerateBitangent", default, deserialize_with = "deserialize_boolish_option")]
     pub tangent_generate_bitangent: Option<bool>,
     #[serde(rename = "extrasTexCoordRanges")]
     pub extras_tex_coord_ranges: Option<HashMap<String, TexCoordRangeDesc>>,
@@ -211,16 +241,17 @@ pub struct SkyDesc {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ShadowFloorDesc {
+    #[serde(default, deserialize_with = "deserialize_boolish_option")]
     pub simple: Option<bool>,
     pub alpha: Option<f32>,
-    #[serde(rename = "edgeFade")]
+    #[serde(rename = "edgeFade", default, deserialize_with = "deserialize_boolish_option")]
     pub edge_fade: Option<bool>,
     pub transform: Option<[f32; 16]>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct AnimData {
-    #[serde(rename = "hasAnimData")]
+    #[serde(rename = "hasAnimData", default, deserialize_with = "deserialize_boolish_option")]
     pub has_anim_data: Option<bool>,
     #[serde(rename = "numAnimations")]
     pub num_animations: Option<usize>,
@@ -234,9 +265,9 @@ pub struct AnimData {
     pub selected_camera: Option<usize>,
     #[serde(rename = "sceneScale")]
     pub scene_scale: f32,
-    #[serde(rename = "showPlayControls")]
+    #[serde(rename = "showPlayControls", default, deserialize_with = "deserialize_boolish_option")]
     pub show_play_controls: Option<bool>,
-    #[serde(rename = "autoPlayAnims")]
+    #[serde(rename = "autoPlayAnims", default, deserialize_with = "deserialize_boolish_option")]
     pub auto_play_anims: Option<bool>,
     #[serde(rename = "meshIDs", default)]
     pub mesh_ids: Vec<PartIndexRef>,

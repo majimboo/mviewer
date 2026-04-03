@@ -56,8 +56,6 @@ jobs:
           cp README.md dist/mviewer/README.md
           cp LICENSE 2>/dev/null dist/mviewer/LICENSE || true
           cp target/release/${{ matrix.bin_name }} dist/mviewer/${{ matrix.bin_name }}
-          if [ -f target/release/mviewer-gui ]; then cp target/release/mviewer-gui dist/mviewer/mviewer-gui; fi
-          if [ -f target/release/mviewer-gui.exe ]; then cp target/release/mviewer-gui.exe dist/mviewer/mviewer-gui.exe; fi
           mkdir -p dist/mviewer/icons
           cp target/generated-icons/mviewer-256.png dist/mviewer/icons/mviewer.png
 
@@ -66,16 +64,16 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist/mviewer/share/applications
-          cp packaging/linux/mviewer-gui.desktop dist/mviewer/share/applications/mviewer-gui.desktop
+          cp packaging/linux/mviewer.desktop dist/mviewer/share/applications/mviewer.desktop
 
       - name: Build macOS app bundle
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          APP_DIR="dist/mviewer/mviewer-gui.app"
+          APP_DIR="dist/mviewer/mviewer.app"
           mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
-          cp target/release/mviewer-gui "$APP_DIR/Contents/MacOS/mviewer-gui"
-          chmod +x "$APP_DIR/Contents/MacOS/mviewer-gui"
+          cp target/release/mviewer "$APP_DIR/Contents/MacOS/mviewer"
+          chmod +x "$APP_DIR/Contents/MacOS/mviewer"
           cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -84,7 +82,7 @@ jobs:
             <key>CFBundleDevelopmentRegion</key>
             <string>English</string>
             <key>CFBundleExecutable</key>
-            <string>mviewer-gui</string>
+            <string>mviewer</string>
             <key>CFBundleIconFile</key>
             <string>AppIcon</string>
             <key>CFBundleIdentifier</key>
@@ -92,7 +90,7 @@ jobs:
             <key>CFBundleInfoDictionaryVersion</key>
             <string>6.0</string>
             <key>CFBundleName</key>
-            <string>mviewer GUI</string>
+            <string>mviewer</string>
             <key>CFBundlePackageType</key>
             <string>APPL</string>
             <key>CFBundleShortVersionString</key>

@@ -1,2 +1,4 @@
 target/
 test_output/
+test_data/*
+!test_data/*.mview

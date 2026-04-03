@@ -17,6 +17,12 @@ pub fn merge_alpha_texture(
     alpha_bytes: &[u8],
     output_path: &Path,
 ) -> Result<()> {
+    let encoded = merge_alpha_texture_bytes(albedo_bytes, alpha_bytes)?;
+    std::fs::write(output_path, encoded)
+        .with_context(|| format!("failed to save {}", output_path.display()))
+}
+
+pub fn merge_alpha_texture_bytes(albedo_bytes: &[u8], alpha_bytes: &[u8]) -> Result<Vec<u8>> {
     let albedo = image::load_from_memory(albedo_bytes).context("failed to decode albedo image")?;
     let alpha = image::load_from_memory(alpha_bytes).context("failed to decode alpha image")?;
 
@@ -45,8 +51,11 @@ pub fn merge_alpha_texture(
         }
     }
 
-    rgba.save(output_path)
-        .with_context(|| format!("failed to save {}", output_path.display()))
+    let mut encoded = Vec::new();
+    DynamicImage::ImageRgba8(rgba)
+        .write_to(&mut std::io::Cursor::new(&mut encoded), image::ImageFormat::Png)
+        .context("failed to encode merged alpha texture")?;
+    Ok(encoded)
 }
 
 pub fn merged_metallic_roughness_name(reflectivity_name: &str) -> String {
@@ -63,6 +72,15 @@ pub fn merge_metallic_roughness_texture(
     gloss_bytes: &[u8],
     output_path: &Path,
 ) -> Result<()> {
+    let encoded = merge_metallic_roughness_texture_bytes(reflectivity_bytes, gloss_bytes)?;
+    std::fs::write(output_path, encoded)
+        .with_context(|| format!("failed to save {}", output_path.display()))
+}
+
+pub fn merge_metallic_roughness_texture_bytes(
+    reflectivity_bytes: &[u8],
+    gloss_bytes: &[u8],
+) -> Result<Vec<u8>> {
     let reflectivity = image::load_from_memory(reflectivity_bytes)
         .context("failed to decode reflectivity image")?
         .to_luma8();
@@ -90,6 +108,9 @@ pub fn merge_metallic_roughness_texture(
         }
     }
 
-    rgba.save(output_path)
-        .with_context(|| format!("failed to save {}", output_path.display()))
+    let mut encoded = Vec::new();
+    DynamicImage::ImageRgba8(rgba)
+        .write_to(&mut std::io::Cursor::new(&mut encoded), image::ImageFormat::Png)
+        .context("failed to encode merged metallic roughness texture")?;
+    Ok(encoded)
 }

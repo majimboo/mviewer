@@ -4,6 +4,7 @@ pub mod gltf;
 pub mod gui;
 pub mod js_export;
 pub mod mesh;
+pub mod obj;
 pub mod runtime;
 pub mod scene;
 

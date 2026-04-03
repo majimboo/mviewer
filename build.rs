@@ -2,7 +2,7 @@ use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 
 fn main() {
-    println!("cargo:rerun-if-changed=marmoset_logos.webp");
+    println!("cargo:rerun-if-changed=marmoset_logo_red.png");
 
     if let Err(err) = generate_shared_icon_assets() {
         panic!("failed to generate shared icon assets: {err}");
@@ -18,7 +18,7 @@ fn main() {
 
 fn generate_shared_icon_assets() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR")?);
-    let source_path = manifest_dir.join("marmoset_logos.webp");
+    let source_path = manifest_dir.join("marmoset_logo_red.png");
     let image = load_clean_icon(&source_path)?;
 
     let target_dir = cargo_target_dir()?;
@@ -41,7 +41,7 @@ fn generate_shared_icon_assets() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(target_os = "windows")]
 fn embed_windows_icon() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR")?);
-    let source_path = manifest_dir.join("marmoset_logos.webp");
+    let source_path = manifest_dir.join("marmoset_logo_red.png");
     let output_dir = PathBuf::from(std::env::var("OUT_DIR")?);
     let icon_path = output_dir.join("mviewer.ico");
 

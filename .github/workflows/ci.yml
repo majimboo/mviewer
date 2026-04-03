@@ -47,11 +47,16 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Export vivfox sample
-        run: cargo run --release -- test_data/vivfox.mview test_output/vivfox
+        run: cargo run --release --bin mviewer -- test_data/vivfox.mview test_output/vivfox
 
       - name: Check expected outputs
         run: |
           test -f test_output/vivfox/vivfox.gltf
           test -f test_output/vivfox/vivfox.bin
-          test -f test_output/vivfox/viewer.html
-          test -f test_output/vivfox/mviewer.runtime.json
+
+      - name: Export vivfox sample as GLB
+        run: cargo run --release --bin mviewer -- test_data/vivfox.mview test_output/vivfox_glb --format glb
+
+      - name: Check expected GLB output
+        run: |
+          test -f test_output/vivfox_glb/vivfox_glb.glb

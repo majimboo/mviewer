@@ -3,18 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>mviewer | MView Viewer, Converter, and glTF Exporter</title>
-  <meta name="description" content="mviewer is a Rust-native MView viewer, converter, and glTF exporter for Marmoset .mview scenes, with animation, skins, and runtime playback output.">
-  <meta property="og:title" content="mviewer | MView Viewer, Converter, and glTF Exporter">
-  <meta property="og:description" content="Convert Marmoset .mview scenes to glTF with animation, skins, and runtime playback output.">
+  <title>mviewer | MView Viewer, Converter, and glTF/GLB Exporter</title>
+  <meta name="description" content="mviewer is a Rust-native MView viewer, converter, and exporter for Marmoset .mview scenes, with an embedded GUI preview, direct local or URL loading, plus glTF, GLB, and OBJ export.">
+  <meta property="og:title" content="mviewer | MView Viewer, Converter, and glTF/GLB Exporter">
+  <meta property="og:description" content="Convert Marmoset .mview scenes with an embedded GUI preview, open local files or supported URLs, and export to glTF, GLB, or OBJ.">
   <meta property="og:type" content="website">
   <link rel="stylesheet" href="site.css">
 </head>
 <body>
   <main class="page">
     <section class="hero">
+      <p><img src="images/marmoset_logo_red.png" alt="mviewer icon" style="width:72px;height:72px"></p>
       <p class="eyebrow">mview viewer and exporter</p>
-      <h1>Convert Marmoset <code>.mview</code> scenes to glTF.</h1>
+      <h1>Convert Marmoset <code>.mview</code> scenes to glTF and GLB.</h1>
       <p class="lead">
         mviewer is a Rust-native <code>.mview</code> viewer, exporter, and converter for static
         and animated Marmoset Viewer scenes. It is designed for users searching for an
@@ -24,8 +25,7 @@
         <a class="button primary" href="https://github.com/majimboo/mviewer/releases/latest">Download latest release</a>
         <a class="button" href="https://github.com/majimboo/mviewer">View on GitHub</a>
       </div>
-      <p class="meta">mviewer exports to glTF directly. If you need FBX or OBJ, use the generated glTF as the intermediate format.</p>
-      <p class="meta">Author: Majid Siddiqui · <a href="mailto:me@majidarif.com">me@majidarif.com</a></p>
+      <p class="meta">mviewer exports to glTF and GLB directly. If you need FBX, use the generated glTF as the intermediate format.</p>
     </section>
 
     <section class="preview">
@@ -37,9 +37,11 @@
         <h2>What it exports</h2>
         <ul>
           <li>Static and animated <code>.gltf</code> scenes</li>
+          <li>Single-file <code>.glb</code> export</li>
           <li>Meshes, skins, animation, cameras, and lights</li>
           <li>Textures plus merged alpha / metallic-roughness maps</li>
-          <li><code>mviewer.runtime.json</code> and generated <code>viewer.html</code></li>
+          <li>GUI export to OBJ/MTL for selected static meshes</li>
+          <li>Desktop preview can open local files or supported URLs directly</li>
         </ul>
       </article>
       <article class="card">
@@ -56,7 +58,7 @@
       <article class="card">
         <h2>Quick start</h2>
         <pre><code>mviewer input.mview output_dir</code></pre>
-        <p>The release package includes both the CLI and the desktop GUI. Launch <code>mviewer-gui</code> for the user-friendly app, or use the CLI for direct export.</p>
+        <p>The release package now uses a single <code>mviewer</code> binary. Launch <code>mviewer</code> with no arguments for the embedded preview app, open a local <code>.mview</code> file or supported URL, or run it with arguments for direct CLI export.</p>
       </article>
       <article class="card">
         <h2>Why glTF first</h2>

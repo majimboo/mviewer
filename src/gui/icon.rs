@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use tao::window::Icon;
 
 pub fn load_app_icon() -> Result<Icon> {
-    let image = image::load_from_memory(include_bytes!("../../marmoset_logos.webp"))
+    let image = image::load_from_memory(include_bytes!("../../marmoset_logo_red.png"))
         .context("embedded GUI icon must decode")?;
     let mut rgba = image.into_rgba8();
     for pixel in rgba.pixels_mut() {

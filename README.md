@@ -1,8 +1,10 @@
+  <p align="center">
+    <img src="marmoset_logo_red.png" alt="mviewer icon" width="128">
+  </p>
+
 # mviewer
 
 Rust-native exporter for Marmoset `.mview` scenes.
-
-Author: Majid Siddiqui (<me@majidarif.com>)
 
 ![vivfox export preview](docs/images/vivfox-exporter-screenshot.png)
 
@@ -30,12 +32,6 @@ After extracting a release archive, run:
 mviewer --help
 ```
 
-Desktop GUI:
-
-```text
-mviewer-gui
-```
-
 ## Feature Parity
 
 ### Marmoset `.mview` / JS Parity
@@ -54,16 +50,16 @@ mviewer-gui
 - [x] material texture extraction
 - [x] alpha texture merge
 - [x] metallic-roughness texture packing
-- [x] generated browser viewer for runtime sidecar playback
+- [x] embedded Marmoset runtime preview in the desktop GUI
+- [x] direct OBJ export in the desktop GUI
 - [ ] full plain-glTF parity for all Marmoset-only runtime behavior
-- [ ] `.glb` output
+- [x] `.glb` output
 - [ ] direct `FBX` export
-- [ ] direct `OBJ` export
 
 ### Project Features
 
 - [x] Rust-native command-line tool
-- [x] Native desktop GUI for file loading, scene inspection, mesh selection, and export
+- [x] Native desktop GUI with embedded Marmoset preview
 - [x] Windows, Linux, and macOS builds
 - [x] GitHub Actions CI and release packaging
 - [x] GitHub Pages project site
@@ -81,35 +77,45 @@ Example:
 mviewer test_data\vivfox.mview test_output\vivfox
 ```
 
-This writes:
+This writes for glTF:
 
 - `<name>.gltf`
 - `<name>.bin`
-- `viewer.html`
-- `mviewer.runtime.json`
 - copied texture files used by the scene
 - merged `*_rgba.png` textures when the source scene uses a separate alpha map
-- `mviewer_raw/` with all source archive entries
+
+For GLB:
+
+```powershell
+mviewer test_data\vivfox.mview test_output\vivfox_glb --format glb
+```
+
+This writes:
+
+- `<name>.glb`
 
 ## GUI Workflow
 
 Launch the desktop app with:
 
 ```text
-mviewer-gui
+mviewer
 ```
 
 The current GUI supports:
 
-- opening a `.mview` file
-- viewing scene metadata and counts
-- inspecting meshes, materials, and animations
-- choosing which meshes to export
-- exporting the selected subset to glTF
+- opening a local `.mview` file
+- loading a supported URL directly, including ArtStation artwork pages that expose a public `.mview`
+- previewing the scene through the embedded Marmoset runtime
+- exporting to glTF, GLB, or OBJ/MTL
+- choosing export options per format
+- remembering the last export defaults and recent files
 
 ## Output Formats
 
-mviewer exports `.mview` scenes to glTF directly.
+mviewer exports `.mview` scenes to glTF and GLB directly.
+
+The desktop GUI can also export selected meshes to OBJ/MTL with source textures.
 
 If you need other formats:
 
@@ -131,21 +137,17 @@ Build:
 cargo build --release
 ```
 
-Run:
+Run GUI:
+
+```powershell
+cargo run
+```
+
+Run CLI:
 
 ```powershell
 cargo run --release -- <input.mview> [output_dir]
 ```
-
-## Runtime Playback
-
-After export, open `viewer.html` from the output directory in a browser. It loads the generated glTF, reads `mviewer.runtime.json`, and applies preserved runtime state such as:
-
-- evaluated object transforms
-- inherited visibility
-- sampled light and camera properties
-- sampled material UV and emissive properties
-- preserved fog / sky / shadow-floor scene data
 
 ## Workflow Notes
 
@@ -155,13 +157,12 @@ If you are looking for an `mview viewer`, `mview editor`, `mview to gltf`, `mvie
 
 `.mview` -> `glTF` -> optional conversion to `FBX`, `OBJ`, Blender, or other formats
 
-This repository no longer uses the old Python extractors or the Noesis plugin as its primary workflow. The current implementation reads `.mview` archives directly, reconstructs the scene, exports glTF, and emits a runtime playback page for preserved Marmoset-specific behavior.
+This repository no longer uses the old Python extractors or the Noesis plugin as its primary workflow. The current implementation reads `.mview` archives directly, exports with a Rust backend, and uses the embedded Marmoset runtime in the desktop GUI for preview parity.
 
 ## Current Limitations
 
 - stock third-party glTF viewers only see the standard glTF export
-- full behavior parity depends on the generated runtime player plus `mviewer.runtime.json`, not plain glTF semantics alone
-- direct `.glb`, `FBX`, and `OBJ` export are not implemented yet
+- direct `FBX` export is not implemented yet
 
 ## Reverse Engineering References
 

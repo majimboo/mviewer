@@ -84,4 +84,4 @@ jobs:
 
       - name: Check expected GLB output
         run: |
-          test -f test_output/vivfox_glb/vivfox_glb.glb
+          test -f test_output/vivfox_glb/vivfox.glb
